@@ -25,6 +25,18 @@ Data is in a SQLite file at `~/.ossi/ossi.db`. Set the `OSSI_HOME` environment v
 somewhere else. Before an update changes the database's structure, OSSI saves a copy next to it,
 named like `ossi.db.v1.bak`.
 
+## The voice add-on
+
+OSSI itself has no dependencies, so talking runs in a separate program. Clicking **Talk** the first
+time creates a Python environment in `~/.ossi/voice/`, installs pinned packages and downloads the
+models. `voice_worker.py` runs in that environment and exchanges lines of JSON with `talk.py`, and
+it runs offline once installed. Deleting the folder removes the add-on. Errors go to
+`~/.ossi/voice/voice.log`.
+
+It uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) to recognize speech,
+[Kokoro](https://github.com/thewh1teagle/kokoro-onnx) for the voice, and
+[sounddevice](https://python-sounddevice.readthedocs.io/) for the microphone and speakers.
+
 ## Project layout
 
 ```
@@ -43,12 +55,16 @@ src/ossi/
   when.py       Understands times like "tomorrow at 3pm"
   weather.py    Gets the forecast from Open-Meteo
   ollama.py     Talks to a local AI model
+  talk.py       Runs a spoken conversation in the window
+  voice.py      Installs the voice add-on and starts its worker
+  voice_worker.py  Listens and speaks, using the add-on's own Python environment
   notifications.py  Windows notifications
   instance.py   Keeps one copy running, and replaces it after an update
   autostart.py  Starts OSSI at login
+  desktop.py    Adds OSSI to the Desktop with its icon
   skills/       One file per skill, loaded automatically
   assets/       The app icons
-scripts/        Generate the Desktop shortcut and the icons
+scripts/        Generates the icons
 tests/          Unit tests
 docs/           This page and the README's screenshots
 ```

@@ -367,6 +367,14 @@ class GeneralTest(PanelTest):
         self.panel.briefing_switch.flip()
         self.assertEqual(self.setting("briefing_automatic"), None)
 
+    def test_report_a_bug_opens_the_new_issue_page(self):
+        self.assertEqual(self.link_texts(self.panel.report_links), ["Report a bug"])
+        with mock.patch("webbrowser.open") as browser:
+            self.root.update()
+            self.click_link(self.panel.report_links, "Report a bug")
+            self.root.update()
+        browser.assert_called_once_with("https://github.com/BrayanVillatoro/OSSI/issues/new")
+
     def test_space_flips_a_switch(self):
         self.root.deiconify()  # Key presses only reach a visible window that has the focus.
         self.root.update()

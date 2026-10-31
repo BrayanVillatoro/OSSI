@@ -4,7 +4,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import ttk
 
-from ossi import autostart, ollama, storage, weather
+from ossi import autostart, desktop, ollama, storage, voice, weather
 from ossi.drawing import rounded_image
 from ossi.registry import Fetch
 from ossi.skills import ai, briefing, startup
@@ -26,6 +26,7 @@ from ossi.theme import (
 )
 
 OLLAMA_SITE = "https://ollama.com/"
+BUG_REPORT_PAGE = "https://github.com/BrayanVillatoro/OSSI/issues/new"
 PULL_COMMAND = f"ollama pull {ollama.RECOMMENDED_MODEL}"
 PASTE_STEP = "Open Command Prompt (search for cmd in the Start menu), press Ctrl+V, then Enter."
 FINISH_STEP = "The download is about 2 GB. When it says success, click Try again."
@@ -35,6 +36,7 @@ KNOB = 18
 SIDE_MARGIN = 28
 RIGHT_SPACE = 90  # Room beside wrapped text for the switch.
 LABEL_INSET = 3  # Lines a box up with label text, which Tk indents slightly.
+SAMPLE_CHECK_MS = 200
 
 
 class Switch(tk.Canvas):
@@ -90,6 +92,7 @@ class SettingsPanel(tk.Frame):
         self.wrapped = []
         self.ai_check = 0  # Only the newest check's answer counts.
         self.place_lookup = 0
+        self.sample = None  # The voice sample playing right now.
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
@@ -111,6 +114,7 @@ class SettingsPanel(tk.Frame):
         )
 
         self.build_ai()
+        self.build_talk()
         self.build_weather()
         self.build_general()
         # Hidden only now: earlier, the next section would have been given their rows.
@@ -448,6 +452,90 @@ class SettingsPanel(tk.Frame):
         weather_skill.set_unit(self.db, unit)
         self.refresh_weather()
 
+    # Talking
+
+    def build_talk(self):
+        self.heading("TALKING")
+        frame = tk.Frame(self.body, bg=BG)
+        frame.grid(sticky="ew", padx=SIDE_MARGIN)
+        self.voice_status = self.note(frame)
+        self.voice_status.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        choice = tk.Frame(frame, bg=BG)
+        choice.grid(row=1, column=0, sticky="w")
+        tk.Label(choice, text="Voice", bg=BG, fg=MUTED, font=SMALL).grid(
+            row=0, column=0, padx=(0, 10)
+        )
+        self.voice_box = ttk.Combobox(
+            choice, state="readonly", font=SMALL, width=14, values=list(voice.VOICES)
+        )
+        self.voice_box.grid(row=0, column=1, sticky="w")
+        self.voice_box.bind("<<ComboboxSelected>>", lambda event: self.choose_voice())
+        self.voice_links = tk.Frame(frame, bg=BG)
+        self.voice_links.grid(row=2, column=0, sticky="w", pady=(6, 0))
+
+    def choose_voice(self):
+        storage.set_setting(self.db, "talk_voice", self.voice_box.get())
+        self.play_sample()
+
+    def play_sample(self):
+        self.stop_sample()
+        if not voice.is_installed():
+            return
+        if self.app.talk.active:
+            self.voice_status.configure(text="End your conversation to hear a sample.")
+            return
+        name = self.voice_box.get()
+        try:
+            self.sample = voice.play_sample(name)
+        except OSError:
+            self.voice_status.configure(text=f"I couldn't play {name}. See {voice.log_path()}.")
+            return
+        self.voice_status.configure(text=f"Playing {name}...")
+        self.after(SAMPLE_CHECK_MS, self.check_sample, self.sample, name)
+
+    def check_sample(self, process, name):
+        if process is not self.sample:
+            return  # Another sample replaced it.
+        code = process.poll()
+        if code is None:
+            self.after(SAMPLE_CHECK_MS, self.check_sample, process, name)
+            return
+        self.sample = None
+        if code:
+            self.voice_status.configure(text=f"I couldn't play {name}. See {voice.log_path()}.")
+        else:
+            self.refresh_talk()
+
+    def stop_sample(self):
+        if self.sample:
+            process, self.sample = self.sample, None
+            process.kill()
+
+    def remove_voice(self):
+        self.stop_sample()
+        self.app.talk.end()
+        voice.remove()
+        self.refresh_talk()
+
+    def refresh_talk(self):
+        chosen = storage.get_setting(self.db, "talk_voice")
+        self.voice_box.set(chosen if chosen in voice.VOICES else voice.DEFAULT_VOICE)
+        if voice.is_installed():
+            self.voice_status.configure(
+                text="The voice add-on is installed. Pick a voice to hear it. A new voice applies "
+                "to your next conversation."
+            )
+            self.links(
+                self.voice_links,
+                [("Hear this voice", self.play_sample), ("Remove the voice add-on", self.remove_voice)],
+            )
+        else:
+            self.voice_status.configure(
+                text="Click Talk in the chat to have a spoken conversation. It offers to install "
+                "the voice add-on, about 600 MB, the first time. You can hear the voices after that."
+            )
+            self.links(self.voice_links, [])
+
     # General
 
     def build_general(self):
@@ -464,6 +552,54 @@ class SettingsPanel(tk.Frame):
                 "Keeps reminders working after your computer restarts.",
                 self.toggle_login,
             )
+        self.desktop_status = None
+        if desktop.supported():
+            frame = tk.Frame(self.body, bg=BG)
+            frame.grid(sticky="ew", padx=SIDE_MARGIN, pady=(0, 10))
+            tk.Label(frame, text="Desktop shortcut", bg=BG, fg=TEXT, font=FONT).grid(
+                row=0, column=0, sticky="w"
+            )
+            self.desktop_status = self.note(frame)
+            self.desktop_status.grid(row=1, column=0, sticky="w")
+            self.desktop_links = tk.Frame(frame, bg=BG)
+            self.desktop_links.grid(row=2, column=0, sticky="w", pady=(4, 0))
+
+        frame = tk.Frame(self.body, bg=BG)
+        frame.grid(sticky="ew", padx=SIDE_MARGIN, pady=(0, 16))
+        tk.Label(frame, text="Found a problem?", bg=BG, fg=TEXT, font=FONT).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.note(frame, "Opens GitHub in your browser. You'll need a free GitHub account.").grid(
+            row=1, column=0, sticky="w"
+        )
+        self.report_links = tk.Frame(frame, bg=BG)
+        self.report_links.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self.links(self.report_links, [("Report a bug", lambda: webbrowser.open(BUG_REPORT_PAGE))])
+
+    def add_to_desktop(self):
+        self.desktop_status.configure(text="Adding it...")
+
+        def finish(db, added, session):
+            self.refresh_desktop("Added to your Desktop." if added else "That didn't work. Try again?")
+
+        self.app.start_fetch(Fetch("", desktop.create, finish))
+
+    def refresh_desktop(self, message=None):
+        if not self.desktop_status:
+            return
+        there = desktop.exists()
+        self.desktop_status.configure(
+            text=message
+            or (
+                "It's on your Desktop. Add it again if its icon looks wrong or OSSI has moved."
+                if there
+                else "Not on your Desktop. Adding it from here gives it OSSI's icon."
+            )
+        )
+        self.links(
+            self.desktop_links,
+            [("Add it again" if there else "Add to Desktop", self.add_to_desktop)],
+        )
 
     def toggle_briefing(self, on):
         (briefing.turn_on if on else briefing.turn_off)(self.db)
@@ -475,8 +611,10 @@ class SettingsPanel(tk.Frame):
         self.briefing_switch.set(storage.get_setting(self.db, "briefing_automatic") != "off")
         if self.login_switch:
             self.login_switch.set(autostart.is_enabled())
+        self.refresh_desktop()
 
     def refresh(self):
         self.refresh_ai()
+        self.refresh_talk()
         self.refresh_weather()
         self.refresh_general()

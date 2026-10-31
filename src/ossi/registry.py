@@ -26,6 +26,8 @@ class Confirm:
 
     command: str
     intro: str = ""  # Shown before the question, to say what it's about.
+    question: str = "Did you mean:"
+    shown: str = ""  # The command as worded in the question, if not as it's typed.
 
 
 @dataclass

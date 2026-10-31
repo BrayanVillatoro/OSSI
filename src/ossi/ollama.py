@@ -26,6 +26,7 @@ ANSWER_FORMAT = {
     "properties": {"command": {"type": "string"}, "reply": {"type": "string"}},
     "required": ["command", "reply"],
 }
+KEEP_LOADED = "30m"  # During a conversation, so that a pause doesn't mean a slow reload.
 REPLY_START = re.compile(r'"reply"\s*:\s*"')
 # Stops at the closing quote, or before an escape like \n that has only partly arrived.
 FINISHED_TEXT = re.compile(r'(?:[^"\\]|\\u[0-9a-fA-F]{4}|\\[^u])*')
@@ -64,11 +65,7 @@ def chat(model, system, message, history=(), on_text=None):
     `on_text` is called with the reply so far each time more arrives, and can raise an
     exception to stop the model.
     """
-    if not is_local(model):
-        raise ValueError(f"{model} doesn't run on this computer")
     body = {
-        "model": model,
-        "stream": True,
         "format": ANSWER_FORMAT,
         "options": {"temperature": 0},
         "messages": [
@@ -77,21 +74,59 @@ def chat(model, system, message, history=(), on_text=None):
             {"role": "user", "content": message},
         ],
     }
+    content = ""
+    for piece in stream(model, body):
+        content += piece
+        if on_text:
+            on_text(reply_so_far(content))
+    answer = json.loads(content)
+    if not isinstance(answer, dict):
+        raise ValueError("The model didn't answer in the requested format")
+    return answer
+
+
+def talk(model, system, message, history=(), on_text=None):
+    """Ask the model for a conversational answer, in plain words instead of JSON."""
+    body = {
+        "keep_alive": KEEP_LOADED,
+        "options": {"temperature": 0.7},
+        "messages": [
+            {"role": "system", "content": system},
+            *history,
+            {"role": "user", "content": message},
+        ],
+    }
+    content = ""
+    for piece in stream(model, body):
+        content += piece
+        if on_text:
+            on_text(content)
+    return content
+
+
+def warm(model, system):
+    """Load the model and read `system` ahead of time, so the first answer isn't the slow one."""
+    body = {
+        "keep_alive": KEEP_LOADED,
+        "options": {"num_predict": 1},
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": "Hi"}],
+    }
+    for _ in stream(model, body):
+        pass
+
+
+def stream(model, body):
+    """Send a chat request to the model, and yield each piece of its answer as it arrives."""
+    if not is_local(model):
+        raise ValueError(f"{model} doesn't run on this computer")
     request = urllib.request.Request(
         f"{ADDRESS}/api/chat",
-        data=json.dumps(body).encode(),
+        data=json.dumps({"model": model, "stream": True, **body}).encode(),
         headers={"Content-Type": "application/json"},
     )
-    content = ""
     with OPENER.open(request, timeout=ANSWER_TIMEOUT_SECONDS) as response:
         for line in response:
             piece = json.loads(line)
             if "error" in piece:
                 raise ValueError(piece["error"])
-            content += piece["message"]["content"]
-            if on_text:
-                on_text(reply_so_far(content))
-    answer = json.loads(content)
-    if not isinstance(answer, dict):
-        raise ValueError("The model didn't answer in the requested format")
-    return answer
+            yield piece["message"]["content"]

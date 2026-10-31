@@ -14,6 +14,19 @@ NEVER_MIND = "OK, never mind."
 DISMISS = {"never mind", "nevermind", "forget it", "cancel", "stop"}
 # "cancel" alone means canceling a reminder unless OSSI just asked a question.
 STOP_WAITING = DISMISS - {"cancel"}
+# Commands that only look something up, so mishearing one does no harm.
+SAFE_TO_SAY = {
+    "reminders",
+    "tasks",
+    "ai status",
+    "weather",
+    "briefing",
+    "what time is it",
+    "what's the date",
+    "help",
+    "notes",
+    "find note <word>",
+}
 MOST_REMEMBERED_MESSAGES = 12
 MOST_REMEMBERED_CHARACTERS = 500
 
@@ -81,7 +94,7 @@ def render(db, result, session):
         return render(db, result.finish(db, result.get_value(), session), session)
     if isinstance(result, Confirm):
         session.pending = result
-        reply = f"{result.intro}Did you mean: {result.command}?"
+        reply = f"{result.intro}{result.question} {result.shown or result.command}?"
     elif isinstance(result, Ask):
         session.pending = result
         reply = result.prompt
@@ -100,6 +113,48 @@ def answer_pending(db, pending, text, session):
     if text.lower() in NO:
         return NEVER_MIND
     return None
+
+
+def first_word(text):
+    words = text.lower().replace(",", " ").split()
+    return words[0] if words else ""
+
+
+def handle_spoken(db, text, session):
+    """Like `handle`, but for speech, which can be misheard and is often just conversation.
+
+    Commands that only look something up run right away, and anything else asks first. Typos
+    aren't corrected, so that everyday words don't turn into "Did you mean".
+    """
+    text = clean(text)
+    stripped = strip_filler(text)
+    found = find_command(text) or find_command(stripped)
+    pending = session.pending
+    # People say more than the bare word out loud, like "Yes, please do".
+    if isinstance(pending, Confirm) and first_word(text) in YES:
+        return handle(db, "yes", session)
+    if isinstance(pending, Confirm) and first_word(text) in NO:
+        return handle(db, "no", session)
+    if isinstance(pending, Ask) and not found:
+        return handle(db, text, session)
+    if (pending and text.lower() in DISMISS) or (session.thinking and text.lower() in STOP_WAITING):
+        return handle(db, text, session)
+
+    session.pending = None
+    session.turn += 1
+    remember(session, "user", text)
+
+    if found and found[0].usage in SAFE_TO_SAY:
+        return render(db, run(db, found, session), session)
+    if found and found[0].usage is not None:
+        return render(db, ai.spoken_confirm(stripped), session)
+
+    def find_suggested(command):
+        command = clean(command)
+        return find_command(command) or find_command(strip_filler(command))
+
+    result = ai.converse(db, text, find_suggested, session)
+    return render(db, FALLBACK if result is None else result, session)
 
 
 def handle(db, text, session=None):

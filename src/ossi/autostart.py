@@ -12,14 +12,18 @@ def supported():
     return sys.platform == "win32"
 
 
-def command_line():
+def launch_parts():
+    """The Python that opens OSSI without a console, and the arguments to give it."""
     python = Path(sys.executable)
     windowed = python.with_name("pythonw.exe")
     if windowed.exists():
         python = windowed
-    if LAUNCHER.exists():
-        return f'"{python}" "{LAUNCHER}" --background'
-    return f'"{python}" -m ossi --background'
+    return python, f'"{LAUNCHER}"' if LAUNCHER.exists() else "-m ossi"
+
+
+def command_line():
+    python, arguments = launch_parts()
+    return f'"{python}" {arguments} --background'
 
 
 def enable():

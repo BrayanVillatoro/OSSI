@@ -12,12 +12,14 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
 
-from ossi import autostart, instance, notifications, router, storage
+from ossi import autostart, desktop, instance, notifications, router, storage
 from ossi.drawing import rounded_image
+from ossi.registry import Fetch
 from ossi.settings_panel import SettingsPanel
 from ossi.skills import briefing
 from ossi.skills.reminders import fire_due, upcoming
 from ossi.skills.tasks import last_completed, open_tasks
+from ossi.talk import Talk
 from ossi.theme import (
     ACCENT,
     ACCENT_HOVER,
@@ -39,6 +41,11 @@ from ossi.when import describe
 
 EXIT_WORDS = ("exit", "quit", "bye")
 ICON = Path(__file__).parent / "assets" / "ossi.ico"
+
+DESKTOP_OFFER = "Add OSSI to your Desktop?\n\nThe shortcut opens OSSI and shows its icon."
+DESKTOP_LATER = "OK. You can add it to your Desktop any time in Settings."
+DESKTOP_ADDED = "I added OSSI to your Desktop."
+DESKTOP_FAILED = "I couldn't add OSSI to your Desktop. You can try again in Settings."
 
 SETTINGS_LINK = "⚙  Settings"
 BACK_LINK = "←  Back to chat"
@@ -92,6 +99,7 @@ class App:
         self.build_sidebar()
         self.build_chat()
         self.settings = SettingsPanel(root, self)
+        self.talk = Talk(self)
 
         self.say("Hi! Type 'help' to see what I can do.")
         self.refresh_sidebar()
@@ -213,8 +221,10 @@ class App:
         self.log.bind("<Button-3>", self.show_reply_menu)
         self.send_typing_to_entry(self.log)
 
+        self.build_talk_status(frame)
+
         self.box = tk.Canvas(frame, bg=BG, height=BOX_HEIGHT, highlightthickness=0, borderwidth=0)
-        self.box.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 20))
+        self.box.grid(row=2, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 20))
         self.box_image_item = self.box.create_image(0, 0, anchor="nw")
 
         self.entry = tk.Entry(
@@ -256,8 +266,65 @@ class App:
             "<Leave>", lambda event: self.send_button.configure(image=self.send_image)
         )
 
+        self.talk_image = rounded_image(68, 32, 8, BORDER, SURFACE)
+        self.talk_on_image = rounded_image(68, 32, 8, ACCENT, SURFACE)
+        self.talk_button = tk.Label(
+            self.box,
+            text="Talk",
+            image=self.talk_image,
+            compound="center",
+            bg=SURFACE,
+            fg=TEXT,
+            font=(FAMILY, 10, "bold"),
+            cursor="hand2",
+            borderwidth=0,
+            padx=0,
+            pady=0,
+        )
+        self.talk_item = self.box.create_window(0, BOX_HEIGHT // 2, anchor="e", window=self.talk_button)
+        self.talk_button.bind("<Button-1>", lambda event: self.talk.toggle())
+
         self.box_border = BORDER
         self.box.bind("<Configure>", lambda event: self.draw_box(self.box_border))
+
+    def build_talk_status(self, frame):
+        """The strip above the box that shows what a conversation is doing. Hidden until one starts."""
+        strip = self.talk_strip = tk.Frame(frame, bg=BG)
+        strip.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 0))
+        strip.columnconfigure(0, weight=1)
+        self.talk_label = tk.Label(strip, bg=BG, fg=ACCENT, font=SMALL_BOLD, anchor="w")
+        self.talk_label.grid(row=0, column=0, sticky="w")
+        link = self.mute_label = tk.Label(
+            strip, text="Mute", bg=BG, fg=MUTED, font=(FAMILY, 10), cursor="hand2"
+        )
+        link.grid(row=0, column=1)
+        link.bind("<Button-1>", lambda event: self.talk.toggle_mute())
+        link.bind("<Enter>", lambda event: link.configure(fg=TEXT))
+        link.bind("<Leave>", lambda event: link.configure(fg=MUTED))
+        strip.grid_remove()
+
+    def show_talk_status(self, text, controls=True):
+        self.talk_label.configure(text=text)
+        if controls:
+            self.mute_label.grid()
+        else:
+            self.mute_label.grid_remove()
+        self.talk_strip.grid()
+        self.log.see("end")
+
+    def hide_talk_status(self):
+        self.talk_strip.grid_remove()
+        self.set_mute_label(False)
+
+    def set_mute_label(self, muted):
+        self.mute_label.configure(text="Unmute" if muted else "Mute")
+
+    def set_talk_button(self, on):
+        self.talk_button.configure(
+            image=self.talk_on_image if on else self.talk_image,
+            fg=ON_ACCENT if on else TEXT,
+            text="End" if on else "Talk",
+        )
 
     def select_all_typed(self, event):
         self.entry.selection_range(0, "end")
@@ -272,7 +339,8 @@ class App:
         self.box_image = rounded_image(width, BOX_HEIGHT, 12, SURFACE, BG, border)
         self.box.itemconfigure(self.box_image_item, image=self.box_image)
         self.box.coords(self.send_item, width - 8, BOX_HEIGHT // 2)
-        self.box.itemconfigure(self.entry_item, width=width - 108)
+        self.box.coords(self.talk_item, width - 84, BOX_HEIGHT // 2)
+        self.box.itemconfigure(self.entry_item, width=width - 184)
 
     def say(self, text, keep_place=False):
         """Add a reply. With keep_place, don't pull someone away from reading older messages."""
@@ -385,6 +453,7 @@ class App:
         if not text:
             return
         if text.lower() in EXIT_WORDS:
+            self.talk.end()
             self.root.destroy()
             return
         self.entry.delete(0, "end")
@@ -404,6 +473,8 @@ class App:
         """Do slow work on another thread. Only the window's thread touches Tk or the database."""
         if fetch.draft:
             self.start_writing(fetch.draft)
+            if self.talk.active:
+                self.talk.follow(fetch.draft)
         threading.Thread(
             target=lambda: self.fetched.put((fetch, fetch.get_value())), daemon=True
         ).start()
@@ -478,6 +549,8 @@ class App:
         reply = router.render(self.db, result, self.session)
         if reply is not None:
             self.say(reply, keep_place=True)
+            if self.talk.active:
+                self.talk.reply_finished(reply)
             self.refresh_sidebar()
             if self.settings.visible:
                 self.settings.refresh()
@@ -491,6 +564,20 @@ class App:
         if self.is_in_use() and not self.settings.visible and briefing.is_due(self.db):
             briefing.mark_given(self.db)
             self.say_result(briefing.give_briefing(self.db, self.session, automatic=True))
+
+    def check_desktop_offer(self):
+        if not self.is_in_use() or not desktop.should_offer(self.db):
+            return
+        # Timers keep running behind the question, so it's marked as asked before it's shown.
+        desktop.mark_offered(self.db)
+        if not messagebox.askyesno("OSSI", DESKTOP_OFFER):
+            self.say(DESKTOP_LATER, keep_place=True)
+            return
+
+        def finish(db, added, session):
+            return DESKTOP_ADDED if added else DESKTOP_FAILED
+
+        self.start_fetch(Fetch("", desktop.create, finish))
 
     def start(self, listener):
         """Begin watching for reminders and launches. Closing the window now hides it."""
@@ -507,6 +594,7 @@ class App:
                 return
             try:
                 self.check_reminders()
+                self.check_desktop_offer()
                 self.check_briefing()
                 self.check_fetches()
             except sqlite3.OperationalError:
@@ -552,6 +640,7 @@ class App:
                 )
             else:
                 self.say(f"Reminder: {row['message']}", keep_place=True)
+                self.talk.tell(f"Reminder: {row['message']}")
         if len(fired) > 1:
             self.toast(f"{len(fired)} reminders", "; ".join(row["message"] for row in fired))
         else:

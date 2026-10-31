@@ -11,6 +11,7 @@ A personal assistant desktop app that runs on your own computer. No AI key, no a
 - **Reminders:** get a Windows notification at the time you ask for.
 - **Tasks and notes:** add them by typing, and search your notes later.
 - **Local AI (optional):** a model on your own computer handles what the commands don't understand.
+- **Talking (optional):** have a spoken conversation, entirely on your own computer.
 
 OSSI only understands what it's been taught, but it copes with typos, polite wording and follow-ups
 like `finish it`.
@@ -19,15 +20,14 @@ Your data stays in a local file, `~/.ossi/ossi.db`, outside this repo.
 
 ## Get started
 
-You need Windows and Python 3.11 or newer. There's nothing else to install.
+You need Windows and Python 3.11 or newer. There's nothing else to install, unless you want the
+optional [Local AI](#local-ai-optional) or [Talking](#talking-optional).
 
-Double-click `OSSI.pyw` to open the app.
+Double-click `OSSI.pyw` to open the app. The first time, OSSI offers to add itself to your Desktop
+with its own icon.
 
-To add a Desktop shortcut, run this once:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\create_shortcut.ps1
-```
+If you delete the shortcut, or OSSI moves, you can add it again in **Settings**. A shortcut made by
+hand shows Python's icon instead.
 
 ## Using the app
 
@@ -55,7 +55,7 @@ You can also click the circle next to a task to complete it, and right-click a m
 ### Settings
 
 Click **Settings** at the bottom of the sidebar to turn on the AI, set your location, switch between
-°F and °C, turn off the daily briefing, or start OSSI when you log in.
+°F and °C, turn off the daily briefing, start OSSI when you log in, add it to your Desktop, or report a bug.
 
 ![The Settings page, with switches for the local AI, daily briefing and starting at login](docs/settings.png)
 
@@ -72,8 +72,8 @@ but anything typed in the box and not yet sent is lost.
 
 ## Weather and your privacy
 
-Weather is the only feature that uses the internet, and it stays off until you set a location or
-ask about a place.
+Weather is the only everyday feature that uses the internet, and it stays off until you set a
+location or ask about a place. The optional add-ons only use it to download themselves.
 
 It comes from [Open-Meteo](https://open-meteo.com/), a free service with no key or account. OSSI
 sends it the place you typed, then that place's coordinates. If Open-Meteo doesn't recognize a ZIP
@@ -110,12 +110,35 @@ Good to know:
   dedicated graphics card. Say `never mind` to stop one.
 - **Accuracy:** models can get things wrong, so check what it suggests.
 
+## Talking (optional)
+
+Talk to OSSI and it talks back, for as long as you like.
+
+1. Set up the [Local AI](#local-ai-optional) first.
+2. Click **Talk** next to the message box. The first time, OSSI offers to install its voice add-on,
+   about 600 MB. After that it works offline.
+3. Just start talking. Say `goodbye` or click **End** to finish.
+
+Good to know:
+
+- **Use a headset.** You can talk over OSSI to interrupt it, but on speakers the microphone can hear
+  OSSI's own voice and cut it off.
+- **Privacy:** the microphone only stays on during a conversation, and you can click **Mute** at any
+  time. What you say is never saved as audio or sent anywhere, though the words appear in the chat.
+- **Speed:** expect a pause of a few seconds before each reply.
+- **Actions:** looking things up happens right away. For anything that changes something, like
+  adding a task, OSSI asks first and you answer out loud.
+- **Memory:** OSSI forgets the conversation when it closes.
+- **Language:** English only for now.
+
+To hear and choose a voice, or to remove the add-on, go to **Settings**.
+
 ## Roadmap
 
 1. **Done:** desktop app, tasks, notes, reminders, typos and follow-ups, daily briefing, weather,
-   optional local AI, Settings page
-2. **Computer control:** open apps and websites, organize the Downloads folder
-3. **Voice:** offline speech recognition and text to speech
+   optional local AI, Settings page, spoken conversations
+2. **Long-term memory:** remember past conversations
+3. **Computer control:** open apps and websites, organize the Downloads folder
 
 ## Development
 
