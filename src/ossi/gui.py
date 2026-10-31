@@ -1,16 +1,23 @@
 """Desktop window: open tasks in the sidebar, chat with OSSI on the right."""
 
 import ctypes
+import queue
+import sqlite3
 import sys
+import threading
+import time
 import tkinter as tk
 import traceback
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from ossi import router, storage
+from ossi import autostart, instance, notifications, router, storage
 from ossi.drawing import rounded_image
+from ossi.skills import briefing
+from ossi.skills.reminders import fire_due, upcoming
 from ossi.skills.tasks import last_completed, open_tasks
+from ossi.when import describe
 
 BG = "#15171C"
 SIDEBAR = "#1C1F26"
@@ -30,12 +37,25 @@ ICON = Path(__file__).parent / "assets" / "ossi.ico"
 
 BUBBLE_MAX_WIDTH = 420
 BOX_HEIGHT = 48
+TICK_MS = 500
+MISSED_AFTER_SECONDS = 60
+
+# Tcl crashes if its interpreter is freed off the main thread, and a weather lookup could
+# still be running as OSSI quits. Holding the window until Python shuts down prevents that.
+open_windows = []
 
 
 class App:
-    def __init__(self, root, db):
+    def __init__(self, root, db, notify=notifications.send):
         self.root = root
         self.db = db
+        self.notify = notify
+        self.session = router.Session(defer=self.start_fetch)
+        self.fetched = queue.Queue()
+        self.listener = None
+        self.toasts = []
+        self.told_about_background = False
+        self.shown_date = None
         self.task_ids = []
         self.reply_count = 0
 
@@ -67,7 +87,7 @@ class App:
         frame.grid(row=0, column=0, sticky="ns")
         frame.grid_propagate(False)
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(3, weight=1)
+        frame.rowconfigure(2, weight=1)
 
         tk.Label(frame, text="OSSI", bg=SIDEBAR, fg=TEXT, font=(FAMILY, 20, "bold")).grid(
             row=0, column=0, sticky="w", padx=20, pady=(18, 0)
@@ -75,10 +95,7 @@ class App:
         self.date_label = tk.Label(frame, bg=SIDEBAR, fg=MUTED, font=FONT)
         self.date_label.grid(row=1, column=0, sticky="w", padx=20)
 
-        self.tasks_label = tk.Label(frame, bg=SIDEBAR, fg=MUTED, font=SMALL_BOLD)
-        self.tasks_label.grid(row=2, column=0, sticky="w", padx=20, pady=(26, 6))
-
-        self.tasks = tk.Text(
+        self.agenda = tk.Text(
             frame,
             bg=SIDEBAR,
             fg=TEXT,
@@ -97,16 +114,23 @@ class App:
             width=1,
             height=1,
         )
-        self.tasks.tag_configure("row", spacing1=6, spacing3=6, lmargin2=28, tabs=(28,))
-        self.tasks.tag_configure("id", foreground=MUTED, font=(FAMILY, 9))
-        self.tasks.tag_configure("empty", foreground=MUTED, spacing1=6, lmargin1=2, lmargin2=2)
-        self.tasks.grid(row=3, column=0, sticky="nsew", padx=(20, 4), pady=(0, 10))
-        add_scrollbar(frame, self.tasks, row=3, column=1, pady=(0, 10))
+        self.agenda.tag_configure(
+            "heading", foreground=MUTED, font=SMALL_BOLD, spacing1=18, spacing3=4, lmargin1=2
+        )
+        self.agenda.tag_configure("row", spacing1=6, spacing3=6, lmargin2=28, tabs=(28,))
+        self.agenda.tag_configure("id", foreground=MUTED, font=(FAMILY, 9))
+        self.agenda.tag_configure("empty", foreground=MUTED, spacing1=6, lmargin1=2, lmargin2=2)
+        self.agenda.tag_configure("reminder", spacing1=6, lmargin1=2, lmargin2=2)
+        self.agenda.tag_configure(
+            "due", foreground=ACCENT, font=(FAMILY, 9), spacing3=6, lmargin1=2, lmargin2=2
+        )
+        self.agenda.grid(row=2, column=0, sticky="nsew", padx=(20, 4), pady=(8, 10))
+        add_scrollbar(frame, self.agenda, row=2, column=1, pady=(8, 10))
 
         self.undo_label = tk.Label(
             frame, bg=SIDEBAR, fg=ACCENT, font=(FAMILY, 10), cursor="hand2", anchor="w"
         )
-        self.undo_label.grid(row=4, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
+        self.undo_label.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
         self.undo_label.bind("<Button-1>", lambda event: self.run("undo"))
         self.undo_label.bind("<Enter>", lambda event: self.undo_label.configure(fg=ACCENT_HOVER))
         self.undo_label.bind("<Leave>", lambda event: self.undo_label.configure(fg=ACCENT))
@@ -318,30 +342,141 @@ class App:
         self.run(text)
 
     def run(self, text):
-        self.say(router.handle(self.db, text))
+        self.say(router.handle(self.db, text, self.session))
         self.refresh_sidebar()
 
     def complete(self, task_id):
         self.run(f"done {task_id}")
 
+    def start_fetch(self, fetch):
+        """Do slow work on another thread. Only the window's thread touches Tk or the database."""
+        threading.Thread(
+            target=lambda: self.fetched.put((fetch, fetch.get_value())), daemon=True
+        ).start()
+
+    def check_fetches(self):
+        while not self.fetched.empty():
+            fetch, value = self.fetched.get()
+            self.say_result(fetch.finish(self.db, value, self.session))
+
+    def say_result(self, result):
+        self.say(router.render(self.db, result, self.session))
+        self.refresh_sidebar()
+
+    def is_in_use(self):
+        # Tk reports no focus window while another app has the focus.
+        return self.root.state() == "normal" and bool(self.root.tk.call("focus"))
+
+    def check_briefing(self):
+        if self.is_in_use() and briefing.is_due(self.db):
+            briefing.mark_given(self.db)
+            self.say_result(briefing.give_briefing(self.db, self.session))
+
+    def start(self, listener):
+        """Begin watching for reminders and launches. Closing the window now hides it."""
+        self.listener = listener
+        self.root.protocol("WM_DELETE_WINDOW", self.hide)
+        self.tick()
+
+    def tick(self):
+        try:
+            if self.listener.poll():
+                self.show()
+            try:
+                self.check_reminders()
+                self.check_briefing()
+                self.check_fetches()
+            except sqlite3.OperationalError:
+                pass  # The database is briefly busy, so the next tick tries again.
+            self.check_toasts()
+            if datetime.now().date() != self.shown_date:
+                self.refresh_sidebar()
+        finally:
+            self.root.after(TICK_MS, self.tick)
+
+    def hide(self):
+        self.root.withdraw()
+        if not self.told_about_background:
+            self.told_about_background = True
+            self.notify(
+                "OSSI is still running",
+                "It stays in the background for your reminders. "
+                "Open OSSI again and type exit to close it completely.",
+            )
+
+    def show(self):
+        self.refresh_sidebar()
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self.entry.focus_set()
+        self.log.see("end")
+
+    def check_reminders(self):
+        now = time.time()
+        fired = fire_due(self.db, now)
+        if not fired:
+            return
+        missed = 0
+        for row in fired:
+            if now - row["due_at"] > MISSED_AFTER_SECONDS:
+                missed += 1
+                self.say(f"Missed reminder from {describe(row['due_at'])}: {row['message']}")
+            else:
+                self.say(f"Reminder: {row['message']}")
+        if len(fired) > 1:
+            self.toast(f"{len(fired)} reminders", "; ".join(row["message"] for row in fired))
+        else:
+            self.toast("Missed reminder" if missed else "Reminder", fired[0]["message"])
+        self.refresh_sidebar()
+
+    def toast(self, title, body):
+        process = self.notify(title, body)
+        if process is None:
+            self.show()
+        else:
+            self.toasts.append(process)
+
+    def check_toasts(self):
+        """If a notification failed, show the window so the reminder isn't lost."""
+        for process in list(self.toasts):
+            code = process.poll()
+            if code is not None:
+                self.toasts.remove(process)
+                if code != 0:
+                    self.show()
+
     def refresh_sidebar(self):
         now = datetime.now()
+        self.shown_date = now.date()
         self.date_label.configure(text=f"{now:%A, %B} {now.day}")
 
         rows = open_tasks(self.db)
         self.task_ids = [row["id"] for row in rows]
-        self.tasks_label.configure(text=f"TASKS  ·  {len(rows)}" if rows else "TASKS")
+        reminders = upcoming(self.db)
 
-        self.tasks.configure(state="normal", cursor="arrow")
-        self.tasks.delete("1.0", "end")
-        for tag in self.tasks.tag_names():
+        self.agenda.configure(state="normal", cursor="arrow")
+        self.agenda.delete("1.0", "end")
+        for tag in self.agenda.tag_names():
             if tag.startswith("check"):
-                self.tasks.tag_delete(tag)
+                self.agenda.tag_delete(tag)
+        if reminders:
+            self.agenda.insert("end", f"REMINDERS  ·  {len(reminders)}\n", "heading")
+            for reminder in reminders:
+                due = describe(reminder["due_at"], now)
+                self.agenda.insert(
+                    "end",
+                    f"{reminder['message']}\n",
+                    "reminder",
+                    f"{due[0].upper()}{due[1:]}  ·  #{reminder['id']}\n",
+                    "due",
+                )
+        self.agenda.insert("end", f"TASKS  ·  {len(rows)}\n" if rows else "TASKS\n", "heading")
         for row in rows:
             self.add_task_row(row)
         if not rows:
-            self.tasks.insert("end", "All clear. Type 'add task' and a title to add one.", "empty")
-        self.tasks.configure(state="disabled")
+            self.agenda.insert("end", "All clear. Type 'add task' and a title to add one.", "empty")
+        self.agenda.configure(state="disabled")
 
         last = last_completed(self.db)
         if last:
@@ -355,16 +490,16 @@ class App:
     def add_task_row(self, row):
         task_id = row["id"]
         tag = f"check{task_id}"
-        self.tasks.tag_configure(tag, foreground=MUTED, font=(FAMILY, 14))
+        self.agenda.tag_configure(tag, foreground=MUTED, font=(FAMILY, 14))
 
         def hover(color, cursor):
-            self.tasks.tag_configure(tag, foreground=color)
-            self.tasks.configure(cursor=cursor)
+            self.agenda.tag_configure(tag, foreground=color)
+            self.agenda.configure(cursor=cursor)
 
-        self.tasks.tag_bind(tag, "<Enter>", lambda event: hover(ACCENT, "hand2"))
-        self.tasks.tag_bind(tag, "<Leave>", lambda event: hover(MUTED, "arrow"))
-        self.tasks.tag_bind(tag, "<Button-1>", lambda event: self.complete(task_id))
-        self.tasks.insert(
+        self.agenda.tag_bind(tag, "<Enter>", lambda event: hover(ACCENT, "hand2"))
+        self.agenda.tag_bind(tag, "<Leave>", lambda event: hover(MUTED, "arrow"))
+        self.agenda.tag_bind(tag, "<Button-1>", lambda event: self.complete(task_id))
+        self.agenda.insert(
             "end",
             "○",
             ("row", tag),
@@ -435,15 +570,25 @@ def add_scrollbar(parent, text, row, column, pady=0):
     text.configure(yscrollcommand=update)
 
 
-def main():
+def main(background=False):
+    if instance.signal_running(show=not background):
+        return 0
     if sys.platform == "win32":
         # Lets the taskbar show OSSI's icon instead of grouping it under Python.
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OSSI")
+        # Keeps the login entry correct if the repo moved since it was turned on.
+        if autostart.is_enabled():
+            autostart.enable()
     db = storage.connect()
+    listener = instance.Listener()
     try:
         root = tk.Tk()
-        App(root, db)
+        open_windows.append(root)
+        if background:
+            root.withdraw()
+        App(root, db).start(listener)
         root.mainloop()
     finally:
+        listener.close()
         db.close()
     return 0

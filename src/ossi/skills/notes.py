@@ -18,7 +18,7 @@ def add_note(db, body):
     return "Saved."
 
 
-@command("notes", r"(?:show |list )?(?:my )?notes")
+@command("notes", r"(?:show (?:me )?|list )?(?:my )?notes")
 def list_notes(db):
     rows = db.execute("SELECT body, created_at FROM notes ORDER BY id DESC LIMIT 20").fetchall()
     return format_notes(rows) if rows else "No notes yet."

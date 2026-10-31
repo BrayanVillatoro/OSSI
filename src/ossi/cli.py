@@ -7,10 +7,10 @@ from ossi import router, storage
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if not args:
+    if not args or args == ["--background"]:
         from ossi import gui
 
-        return gui.main()
+        return gui.main(background=bool(args))
     db = storage.connect()
     try:
         print(router.handle(db, " ".join(args)))

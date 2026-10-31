@@ -19,7 +19,7 @@ class RouterTest(unittest.TestCase):
         self.assertEqual(self.say("add task call the bank"), "Added task 1: call the bank")
         self.assertEqual(self.say("add buy milk to my list"), "Added task 2: buy milk")
         self.assertEqual(self.say("tasks"), "1. call the bank\n2. buy milk")
-        self.assertEqual(self.say("done 1"), "Completed task 1.")
+        self.assertEqual(self.say("done 1"), "Completed task 1: call the bank")
         self.assertEqual(self.say("what do I need to do?"), "2. buy milk")
 
     def test_completing_a_missing_task_says_so(self):

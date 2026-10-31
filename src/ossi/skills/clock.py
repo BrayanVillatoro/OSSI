@@ -5,7 +5,12 @@ from datetime import datetime
 from ossi.registry import command
 
 
-@command("what time is it", r"time", r"what time is it", r"what's the time", r"what is the time")
+@command(
+    "what time is it",
+    r"time",
+    r"what time is it",
+    r"what(?:'?s| is) the time",
+)
 def current_time(db):
     return datetime.now().strftime("It's %I:%M %p.")
 
@@ -14,7 +19,7 @@ def current_time(db):
     "what's the date",
     r"date",
     r"today",
-    r"what(?:'s| is) (?:the date|today's date)",
+    r"what(?:'?s| is) (?:the date|today'?s date)",
     r"what day is (?:it|today)",
 )
 def current_date(db):

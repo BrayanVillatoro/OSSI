@@ -20,4 +20,4 @@ ossi-gui = "ossi.gui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ossi = ["assets/*.ico"]
+ossi = ["assets/*.ico", "assets/*.png"]
