@@ -9,12 +9,21 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 ADDRESS = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "llama3.2"
 QUICK_TIMEOUT_SECONDS = 5
+START_TIMEOUT_SECONDS = 30
+START_CHECK_SECONDS = 0.25
+START_LOCK = threading.Lock()
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 # The longest wait for more of the answer. A model has to load before its first word, and
 # this can be slow without a dedicated graphics card.
 ANSWER_TIMEOUT_SECONDS = 180
@@ -32,9 +41,66 @@ REPLY_START = re.compile(r'"reply"\s*:\s*"')
 FINISHED_TEXT = re.compile(r'(?:[^"\\]|\\u[0-9a-fA-F]{4}|\\[^u])*')
 
 
-def is_installed():
+def find_program():
     default = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
-    return bool(shutil.which("ollama")) or default.is_file()
+    found = shutil.which("ollama")
+    if found:
+        return found
+    return str(default) if default.is_file() else None
+
+
+def is_installed():
+    return bool(find_program())
+
+
+def is_running():
+    try:
+        with OPENER.open(f"{ADDRESS}/api/version", timeout=QUICK_TIMEOUT_SECONDS):
+            return True
+    except OSError:
+        return False
+
+
+def start():
+    """Start Ollama if it isn't running, and wait for it. Returns whether it's running now.
+
+    It keeps running after OSSI closes, as it would if opened any other way, and models unload
+    themselves when they aren't being used.
+    """
+    with START_LOCK:  # Two messages at once shouldn't start it twice.
+        if is_running():
+            return True
+        program = find_program()
+        if not program:
+            return False
+        try:
+            subprocess.Popen(
+                [program, "serve"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=NO_WINDOW,
+                # Without this, a setting on this computer could open it up to the network.
+                env={**os.environ, "OLLAMA_HOST": ADDRESS.removeprefix("http://")},
+            )
+        except OSError:
+            return False
+        deadline = time.monotonic() + START_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            if is_running():
+                return True
+            time.sleep(START_CHECK_SECONDS)
+        return False
+
+
+def starting_if_needed(work):
+    """Do something that needs Ollama, first starting it if that's why it can't connect."""
+    try:
+        return work()
+    except urllib.error.URLError:
+        if not start():
+            raise
+    return work()
 
 
 def is_local(model):

@@ -12,7 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ossi import gui, ollama, router, storage, talk, voice, voice_worker
+from ossi import glow, gui, ollama, router, storage, talk, voice, voice_worker
 from ossi.voice_worker import END_FRAMES, INTERRUPT_FRAMES, START_FRAMES, Utterances, is_echo
 
 
@@ -61,6 +61,49 @@ class UtterancesTest(unittest.TestCase):
         for number in range(3, 3 + START_FRAMES):
             utterances.add(number, 0.9)
         self.assertEqual(utterances.frames[:2], [0, 1])
+
+
+class GlowTest(unittest.TestCase):
+    def test_louder_voices_glow_more(self):
+        for state in (glow.LISTENING, glow.HEARING, glow.SPEAKING):
+            quiet = glow.target_strength(state, 0.0, 0)
+            loud = glow.target_strength(state, 1.0, 0)
+            self.assertGreater(loud, quiet + 0.5, state)
+
+    def test_muted_is_dim_whatever_it_hears(self):
+        self.assertLess(glow.target_strength(glow.MUTED_STATE, 1.0, 0), 0.1)
+
+    def test_thinking_pulses_by_itself(self):
+        values = {round(glow.target_strength(glow.THINKING, 0.0, t / 10), 2) for t in range(20)}
+        self.assertGreater(len(values), 5)
+
+    def test_strength_stays_in_range_at_full_volume(self):
+        for state in glow.COLORS:
+            for now in range(50):
+                self.assertLessEqual(glow.target_strength(state, 1.0, now), 1.02)
+
+    def test_fades_more_slowly_than_it_rises(self):
+        rise = glow.next_strength(0.0, 1.0)
+        fall = 1.0 - glow.next_strength(1.0, 0.0)
+        self.assertGreater(rise, fall)
+
+    def test_glow_is_brightest_in_the_middle_and_gone_at_the_edges(self):
+        rows = glow.glow_rows(glow.SIZE, "#FFFFFF", "#000000", 1.0)
+        self.assertEqual(rows[glow.SIZE // 2][glow.SIZE // 2], "#FFFFFF")
+        self.assertEqual(rows[0][0], "#000000")
+        for x, y in ((0, glow.SIZE // 2), (glow.SIZE // 2, 0)):
+            self.assertLess(int(rows[y][x][1:3], 16), 6)  # Too faint to see where the picture ends.
+
+    def test_a_stronger_glow_lights_up_more_of_the_picture(self):
+        def lit(strength):
+            rows = glow.glow_rows(glow.SIZE, "#FFFFFF", "#000000", strength)
+            return sum(color != "#000000" for row in rows for color in row)
+
+        self.assertGreater(lit(1.0), lit(0.0))
+
+    def test_every_state_has_a_color(self):
+        for state in (glow.WAITING, glow.LISTENING, glow.HEARING, glow.THINKING, glow.SPEAKING, glow.MUTED_STATE):
+            self.assertIn(state, glow.COLORS)
 
 
 class EchoTest(unittest.TestCase):
@@ -238,8 +281,14 @@ class WindowTest(unittest.TestCase):
         FakeProcess.created = []
         self.app = gui.App(self.root, self.db, notify=lambda title, body: None)
         self.addCleanup(self.app.settings.stop_sample)
+        self.addCleanup(self.app.glow.stop)
         self.talk = self.app.talk
+        self.addCleanup(self.cancel_talk_timer)
         storage.set_setting(self.db, "ai_model", "llama3.2:latest")
+
+    def cancel_talk_timer(self):
+        if self.talk.timer is not None:
+            self.root.after_cancel(self.talk.timer)
 
     def installed(self):
         voice.folder().mkdir(parents=True, exist_ok=True)
@@ -446,6 +495,71 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(self.status(), "Speaking...")
         self.event(type="quiet")
         self.assertEqual(self.status(), "Listening...")
+
+    def glow_state(self):
+        return self.app.glow.state_name
+
+    def test_the_glow_follows_the_conversation(self):
+        self.installed()
+        self.talk.toggle()
+        self.process = FakeProcess.created[-1]
+        self.assertEqual(self.glow_state(), glow.WAITING)
+        self.assertIsNotNone(self.app.glow.timer)
+        self.event(type="ready")
+        self.assertEqual(self.glow_state(), glow.LISTENING)
+        self.event(type="hearing")
+        self.assertEqual(self.glow_state(), glow.HEARING)
+        self.event(type="speaking")
+        self.assertEqual(self.glow_state(), glow.SPEAKING)
+        self.event(type="quiet")
+        self.assertEqual(self.glow_state(), glow.LISTENING)
+        self.talk.toggle_mute()
+        self.assertEqual(self.glow_state(), glow.MUTED_STATE)
+
+    def test_the_glow_stops_when_the_conversation_ends(self):
+        self.begin()
+        self.talk.toggle()
+        self.assertIsNone(self.app.glow.timer)
+        self.assertEqual(self.app.glow.strength, 0.0)
+
+    def test_the_glow_hears_sound_levels(self):
+        self.begin()
+        self.event(type="level", value=0.7)
+        self.assertEqual(self.app.glow.level, 0.7)
+
+    def test_thinking_shows_while_the_next_sentence_is_on_its_way(self):
+        self.begin()
+        release = threading.Event()
+
+        def chat(model, system, message, history, on_text):
+            on_text("First one. Second")
+            release.wait(5)
+            return "First one. Second one."
+
+        with mock.patch.object(ollama, "talk", chat):
+            self.event(type="heard", text="tell me something")
+            self.wait_for(lambda: "First one." in self.process.said())
+            self.event(type="speaking")
+            self.event(type="quiet")
+            self.assertEqual(self.glow_state(), glow.THINKING)
+            release.set()
+            self.wait_for(lambda: not self.app.fetched.empty())
+            self.app.check_fetches()
+
+    def test_no_glow_while_setting_up(self):
+        def installing(progress):
+            progress("Setting up voice: step")
+            raise OSError("no internet")
+
+        with mock.patch("ossi.talk.messagebox.askyesno", return_value=True), mock.patch.object(
+            voice, "install", installing
+        ):
+            self.talk.toggle()
+            self.assertIsNone(self.app.glow.timer)
+            self.assertFalse(self.app.glow.winfo_manager())
+            deadline = time.time() + 5
+            while "no internet" not in self.log() and time.time() < deadline:
+                self.root.update()
 
     def test_a_reminder_coming_due_is_spoken(self):
         self.begin()

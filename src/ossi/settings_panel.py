@@ -236,7 +236,9 @@ class SettingsPanel(tk.Frame):
             if check == self.ai_check:
                 self.show_ollama(models, turning_on)
 
-        self.app.start_fetch(Fetch("", ollama.list_models, finish))
+        self.app.start_fetch(
+            Fetch("", lambda: ollama.starting_if_needed(lambda: ollama.list_models()), finish)
+        )
 
     def show_ollama(self, models, turning_on):
         if models is None:
@@ -258,14 +260,16 @@ class SettingsPanel(tk.Frame):
     def show_unreachable(self, turning_on):
         if not turning_on:
             self.set_ai_status(
-                "On, but Ollama isn't running. OSSI still works, just without the AI.",
+                "On, but Ollama isn't running and I couldn't start it. OSSI still works, just "
+                "without the AI.",
                 [("Check again", self.try_again)],
             )
             return
         self.ai_switch.set(False)
         if ollama.is_installed():
             self.set_ai_status(
-                "Ollama isn't running. Start it, then try again.",
+                "Ollama isn't running and I couldn't start it. Open it from the Start menu, then "
+                "try again.",
                 [("Try again", self.try_again)],
             )
         else:

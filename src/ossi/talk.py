@@ -4,7 +4,7 @@ import re
 import threading
 from tkinter import messagebox
 
-from ossi import ollama, router, storage, voice
+from ossi import glow, ollama, router, storage, voice
 from ossi.skills import ai
 
 POLL_MS = 50
@@ -69,7 +69,7 @@ class Talk:
 
     def install(self):
         self.installing = True
-        self.app.show_talk_status("Setting up voice...", controls=False)
+        self.app.show_talk_status("Setting up voice...")
 
         def work():
             try:
@@ -96,7 +96,7 @@ class Talk:
                     f"There's more detail in {voice.log_path()}."
                 )
             else:
-                self.app.show_talk_status(message, controls=False)
+                self.app.show_talk_status(message)
 
     def start(self):
         self.app.settings.stop_sample()  # The microphone would hear it.
@@ -106,7 +106,7 @@ class Talk:
         self.active = True
         self.muted = False
         self.ending = False
-        self.app.show_talk_status("Getting ready...")
+        self.app.show_talk_status("Getting ready...", glow.WAITING)
         self.app.set_talk_button(True)
         system = ai.build_talk_instructions(self.app.db)
         threading.Thread(target=self.warm_up, args=(model, system), daemon=True).start()
@@ -114,7 +114,7 @@ class Talk:
 
     def warm_up(self, model, system):
         try:
-            ollama.warm(model, system)
+            ollama.starting_if_needed(lambda: ollama.warm(model, system))
         except Exception:
             pass  # The first reply will say so if the model really can't be reached.
 
@@ -134,12 +134,14 @@ class Talk:
 
     def handle(self, event):
         kind = event["type"]
-        if kind == "ready":
+        if kind == "level":
+            self.app.glow.set_level(event["value"])
+        elif kind == "ready":
             self.show_listening()
             self.app.say(GREETING, keep_place=True)
             self.speak(GREETING)
         elif kind == "hearing":
-            self.app.show_talk_status("Listening...")
+            self.app.show_talk_status("Listening...", glow.HEARING)
         elif kind == "heard":
             self.respond(event["text"])
         elif kind == "nothing":
@@ -147,7 +149,7 @@ class Talk:
         elif kind == "interrupted":
             self.keep_interrupted_reply()
         elif kind == "speaking":
-            self.app.show_talk_status("Speaking...")
+            self.app.show_talk_status("Speaking...", glow.SPEAKING)
         elif kind == "quiet":
             if self.ending:
                 self.end()
@@ -163,7 +165,12 @@ class Talk:
         self.app.say(f"Sorry, I had to end the conversation: {reason}. Details: {voice.log_path()}")
 
     def show_listening(self):
-        self.app.show_talk_status("Muted" if self.muted else "Listening...")
+        if self.muted:
+            self.app.show_talk_status("Muted", glow.MUTED_STATE)
+        elif self.draft:  # It said a sentence, and the model is still writing the next one.
+            self.app.show_talk_status("Thinking...", glow.THINKING)
+        else:
+            self.app.show_talk_status("Listening...", glow.LISTENING)
 
     def respond(self, text):
         session = self.app.session
@@ -174,7 +181,7 @@ class Talk:
             self.speak(FAREWELL)
             return
         session.canceled_turn = session.turn  # A new message replaces any answer on its way.
-        self.app.show_talk_status("Thinking...")
+        self.app.show_talk_status("Thinking...", glow.THINKING)
         reply = router.handle_spoken(self.app.db, text, session)
         if reply is not None:
             self.app.say(reply)

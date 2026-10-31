@@ -195,7 +195,12 @@ def understand(db, text, find_command, session):
         draft.text = reply
 
     return Fetch(
-        None, lambda: ollama.chat(model, system, text, history, on_text=write), finish, draft
+        None,
+        lambda: ollama.starting_if_needed(
+            lambda: ollama.chat(model, system, text, history, on_text=write)
+        ),
+        finish,
+        draft,
     )
 
 
@@ -253,7 +258,12 @@ def converse(db, text, find_command, session):
         return words or "Sorry, I lost my train of thought."
 
     return Fetch(
-        None, lambda: ollama.talk(model, system, text, history, on_text=write), finish, draft
+        None,
+        lambda: ollama.starting_if_needed(
+            lambda: ollama.talk(model, system, text, history, on_text=write)
+        ),
+        finish,
+        draft,
     )
 
 
@@ -289,7 +299,11 @@ def turn_on(db, model=None):
             return save_model(db, {"name": models[0]})
         return ask_which([{"name": name} for name in models], save_model)
 
-    return Fetch("Looking for Ollama...", ollama.list_models, finish)
+    return Fetch(
+        "Looking for Ollama...",
+        lambda: ollama.starting_if_needed(lambda: ollama.list_models()),
+        finish,
+    )
 
 
 @command("turn off ai", r"(?:turn off|disable|stop)(?: the)? (?:ai|ollama)")
@@ -316,4 +330,8 @@ def status(db):
             return f"The AI is on, but Ollama no longer has {model}. Type 'turn on ai' to pick another."
         return f"The AI is on, using {model}, and Ollama is running."
 
-    return Fetch("Looking for Ollama...", ollama.list_models, finish)
+    return Fetch(
+        "Looking for Ollama...",
+        lambda: ollama.starting_if_needed(lambda: ollama.list_models()),
+        finish,
+    )

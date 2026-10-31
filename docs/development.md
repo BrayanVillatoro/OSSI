@@ -74,6 +74,7 @@ src/ossi/
   weather.py    Gets the forecast from Open-Meteo
   ollama.py     Talks to a local AI model
   talk.py       Runs a spoken conversation in the window
+  glow.py       The animated glow shown during a conversation
   voice.py      Installs the voice add-on and starts its worker
   voice_worker.py  Listens and speaks, using the add-on's own Python environment
   notifications.py  Windows notifications

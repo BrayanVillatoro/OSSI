@@ -31,6 +31,9 @@ NOT_SPEECH = 0.6
 UNSURE = -1.0
 ECHO_SHARE = 0.8
 ECHO_MEMORY = 6  # How many recent sentences to compare against.
+LOUD = 0.12  # What counts as full volume for the glow.
+HEARD_LEVEL_EVERY = 3  # Frames between sound levels, about 10 a second.
+SPOKEN_LEVEL_EVERY = 2  # Likewise for blocks of speech.
 
 
 class Utterances:
@@ -64,6 +67,12 @@ class Utterances:
 
     def reset(self):
         self.__init__()
+
+
+def loudness(samples):
+    """How loud some audio is, from 0 to 1, for the glow to follow. `samples` is a numpy array."""
+    power = float((samples * samples).mean())
+    return round(min((power**0.5 / LOUD) ** 0.5, 1.0), 2)
 
 
 def words_of(text):
@@ -153,12 +162,16 @@ class Worker:
         return float(output.reshape(-1)[0])
 
     def listen(self):
+        count = 0
         while True:
             frame = self.heard_frames.get()
             if self.muted:
                 self.utterances.reset()
                 continue
             speaking = self.unfinished > 0
+            count += 1
+            if not speaking and count % HEARD_LEVEL_EVERY == 0:
+                self.send(type="level", value=loudness(frame))
             result = self.utterances.add(frame, self.level(frame), speaking)
             if result == "started":
                 self.interrupted_at_start = speaking
@@ -206,10 +219,13 @@ class Worker:
                     continue
                 self.spoken.append(text)
                 self.send(type="speaking")
-                for start in range(0, len(samples), PLAY_BLOCK):
+                for number, start in enumerate(range(0, len(samples), PLAY_BLOCK)):
                     if generation != self.generation:
                         break
-                    speaker.write(samples[start : start + PLAY_BLOCK])
+                    block = samples[start : start + PLAY_BLOCK]
+                    if number % SPOKEN_LEVEL_EVERY == 0:
+                        self.send(type="level", value=loudness(block))
+                    speaker.write(block)
                 with self.lock:
                     if generation != self.generation:
                         continue

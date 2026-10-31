@@ -94,6 +94,8 @@ command:
    If it says `ollama` isn't recognized, close Command Prompt, open a new one and try again.
 4. When it says `success`, go to OSSI, click **Settings** and turn on **Use a local AI model**.
 
+While the AI is on, OSSI starts Ollama for you if it isn't already running.
+
 Good to know:
 
 - **Privacy:** your messages stay on your computer. The model sees your message, the last few
@@ -112,7 +114,8 @@ Talk to OSSI and it talks back, for as long as you like.
 1. Set up the [Local AI](#local-ai-optional) first.
 2. Click **Talk** next to the message box. The first time, OSSI offers to install its voice add-on,
    about 600 MB. After that it works offline.
-3. Just start talking. Say `goodbye` or click **End** to finish.
+3. Just start talking. A glow shows what OSSI is doing and reacts to both your voices. Say `goodbye`
+   or click **End** to finish.
 
 Good to know:
 

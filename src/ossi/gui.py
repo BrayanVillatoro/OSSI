@@ -12,8 +12,9 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
 
-from ossi import autostart, desktop, instance, notifications, router, storage, updater
+from ossi import autostart, desktop, instance, notifications, ollama, router, storage, updater
 from ossi.drawing import rounded_image
+from ossi.glow import GlowOrb
 from ossi.registry import Fetch
 from ossi.settings_panel import SettingsPanel
 from ossi.skills import briefing
@@ -295,28 +296,36 @@ class App:
         """The strip above the box that shows what a conversation is doing. Hidden until one starts."""
         strip = self.talk_strip = tk.Frame(frame, bg=BG)
         strip.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 0))
-        strip.columnconfigure(0, weight=1)
-        self.talk_label = tk.Label(strip, bg=BG, fg=ACCENT, font=SMALL_BOLD, anchor="w")
-        self.talk_label.grid(row=0, column=0, sticky="w")
+        strip.columnconfigure((0, 2), weight=1, uniform="sides")  # Keeps the middle centered.
+        self.glow = GlowOrb(strip)
+        self.glow.grid(row=0, column=1)
+        self.talk_label = tk.Label(strip, bg=BG, fg=ACCENT, font=SMALL_BOLD)
+        self.talk_label.grid(row=1, column=1)
         link = self.mute_label = tk.Label(
             strip, text="Mute", bg=BG, fg=MUTED, font=(FAMILY, 10), cursor="hand2"
         )
-        link.grid(row=0, column=1)
+        link.grid(row=1, column=2, sticky="e")
         link.bind("<Button-1>", lambda event: self.talk.toggle_mute())
         link.bind("<Enter>", lambda event: link.configure(fg=TEXT))
         link.bind("<Leave>", lambda event: link.configure(fg=MUTED))
         strip.grid_remove()
 
-    def show_talk_status(self, text, controls=True):
+    def show_talk_status(self, text, glow_state=None):
+        """Show what a conversation is doing. Without a glow state, it's still being set up."""
         self.talk_label.configure(text=text)
-        if controls:
+        if glow_state:
             self.mute_label.grid()
+            self.glow.grid()
+            self.glow.set_state(glow_state)
+            self.glow.start()
         else:
             self.mute_label.grid_remove()
+            self.glow.grid_remove()
         self.talk_strip.grid()
         self.log.see("end")
 
     def hide_talk_status(self):
+        self.glow.stop()
         self.talk_strip.grid_remove()
         self.set_mute_label(False)
 
@@ -569,6 +578,11 @@ class App:
             briefing.mark_given(self.db)
             self.say_result(briefing.give_briefing(self.db, self.session, automatic=True))
 
+    def start_ollama_if_on(self):
+        """Have the local AI ready ahead of the first message, if it's turned on."""
+        if storage.get_setting(self.db, "ai_model"):
+            threading.Thread(target=ollama.start, daemon=True).start()
+
     def restart_updated(self):
         """Open the updated OSSI, which replaces this copy within a moment."""
         self.talk.end()
@@ -592,6 +606,7 @@ class App:
         """Begin watching for reminders and launches. Closing the window now hides it."""
         self.listener = listener
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
+        self.start_ollama_if_on()
         self.tick()
 
     def tick(self):
