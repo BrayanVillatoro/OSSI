@@ -128,9 +128,20 @@ OSSI works fully without AI. To have it handle messages its commands don't under
 `I need to call the bank sometime tomorrow`, run a model on your own computer with
 [Ollama](https://ollama.com/). There's no key or account, and your messages stay on your computer.
 
-1. Install Ollama, then download a model in a terminal: `ollama pull llama3.2`. That's about 2 GB.
-2. In OSSI, click **Settings** and turn on **Use a local AI model**. If you have several models,
-   choose one from the list that appears.
+Installing Ollama doesn't download a model, so that takes a separate command:
+
+1. Download Ollama from [ollama.com](https://ollama.com/) and install it.
+2. Open Command Prompt: open the Start menu, type `cmd` and press Enter.
+3. Paste this command into Command Prompt and press Enter. It downloads the model, which is about
+   2 GB, so it can take a while.
+
+   ```
+   ollama pull llama3.2
+   ```
+
+   If it says `ollama` isn't recognized, close Command Prompt, open a new one and try again.
+4. When it says `success`, go to OSSI, click **Settings** and turn on **Use a local AI model**. If
+   you have several models, choose one from the list that appears.
 
 OSSI tries its own commands and typo corrections first, so those stay instant. For anything else,
 the model sees your message, the last few messages of the conversation, the time, and your open
@@ -139,10 +150,11 @@ those recent messages. It can answer in words or suggest one of OSSI's commands,
 before running a suggestion. It can't change your settings, and it never touches the database
 itself. The conversation is only kept in memory while OSSI runs.
 
-Models can get things wrong, so check what it suggests. Answers can take a while on a computer
-without a dedicated graphics card. You can keep using the window in the meantime, and a late answer
-says which message it's about. Say `never mind` to stop waiting. OSSI refuses Ollama's online
-models, because those would send your messages elsewhere.
+Models can get things wrong, so check what it suggests. Answers appear in the chat as the model
+writes them, and the first words can take a while on a computer without a dedicated graphics card.
+You can keep using the window in the meantime, and if you do, the finished answer moves to the end
+of the chat and says which message it's about. Say `never mind` to stop the model. OSSI refuses
+Ollama's online models, because those would send your messages elsewhere.
 
 ### Talking to OSSI
 

@@ -46,6 +46,8 @@ BACK_LINK = "←  Back to chat"
 BUBBLE_MAX_WIDTH = 420
 BOX_HEIGHT = 48
 TICK_MS = 500
+WRITE_MS = 100  # How often a reply being written updates.
+FRAMES_PER_DOT = 4
 MISSED_AFTER_SECONDS = 60
 AT_BOTTOM = 0.999  # How far down the chat counts as being at the end, from 0 to 1.
 
@@ -67,6 +69,9 @@ class App:
         self.shown_date = None
         self.task_ids = []
         self.reply_count = 0
+        self.writing = {}  # The drafts on show, and the number of each one's reply.
+        self.write_timer = None
+        self.write_frame = 0
 
         root.title("OSSI")
         root.geometry("940x600")
@@ -199,6 +204,7 @@ class App:
         )
         self.log.tag_configure("ossi", spacing3=4, spacing2=3, rmargin=70)
         self.log.tag_configure("you", justify="right", spacing1=16)
+        self.log.tag_configure("writing", foreground=MUTED)
         self.log.grid(row=0, column=0, sticky="nsew")
         add_scrollbar(frame, self.log, row=0, column=1)
 
@@ -386,7 +392,9 @@ class App:
         self.run(text)
 
     def run(self, text):
-        self.say(router.handle(self.db, text, self.session))
+        reply = router.handle(self.db, text, self.session)
+        if reply is not None:  # None means a draft is showing instead.
+            self.say(reply)
         self.refresh_sidebar()
 
     def complete(self, task_id):
@@ -394,6 +402,8 @@ class App:
 
     def start_fetch(self, fetch):
         """Do slow work on another thread. Only the window's thread touches Tk or the database."""
+        if fetch.draft:
+            self.start_writing(fetch.draft)
         threading.Thread(
             target=lambda: self.fetched.put((fetch, fetch.get_value())), daemon=True
         ).start()
@@ -401,7 +411,68 @@ class App:
     def check_fetches(self):
         while not self.fetched.empty():
             fetch, value = self.fetched.get()
+            if fetch.draft:
+                self.stop_writing(fetch.draft)
             self.say_result(fetch.finish(self.db, value, self.session))
+
+    def start_writing(self, draft):
+        """Add a reply that fills in as the draft grows, until the finished one replaces it."""
+        self.reply_count += 1
+        number = self.writing[draft] = self.reply_count
+        self.log.configure(state="normal")
+        self.log.insert(
+            "end",
+            "OSSI\n",
+            ("name", f"block{number}"),
+            " ",
+            ("ossi", f"block{number}", f"body{number}"),
+            "\n",
+            ("ossi", f"block{number}"),
+        )
+        self.log.configure(state="disabled")
+        self.log.see("end")
+        self.draw_draft(draft)
+        if self.write_timer is None:
+            self.write_timer = self.root.after(WRITE_MS, self.animate_writing)
+
+    def draw_draft(self, draft):
+        number = self.writing[draft]
+        follow = self.log.yview()[1] >= AT_BOTTOM
+        dots = "•" * (self.write_frame // FRAMES_PER_DOT % 3 + 1)
+        tags = ("ossi", f"block{number}", f"body{number}")
+        self.log.configure(state="normal")
+        start = self.log.index(f"body{number}.first")
+        self.log.delete(f"body{number}.first", f"body{number}.last")
+        self.log.insert(
+            start,
+            draft.text,
+            (*tags, f"reply{number}"),
+            f" {dots}" if draft.text else f"Writing a reply {dots}",
+            (*tags, "writing"),
+        )
+        self.log.configure(state="disabled")
+        if follow:
+            self.log.see("end")
+
+    def animate_writing(self):
+        self.write_timer = None
+        self.write_frame += 1
+        for draft in list(self.writing):
+            if draft.stopped():
+                self.stop_writing(draft)
+            else:
+                self.draw_draft(draft)
+        if self.writing:
+            self.write_timer = self.root.after(WRITE_MS, self.animate_writing)
+
+    def stop_writing(self, draft):
+        number = self.writing.pop(draft, None)
+        if number is None:
+            return  # It was already stopped.
+        self.log.configure(state="normal")
+        self.log.delete(f"block{number}.first", f"block{number}.last")
+        self.log.configure(state="disabled")
+        self.log.tag_delete(f"block{number}", f"body{number}", f"reply{number}")
 
     def say_result(self, result):
         reply = router.render(self.db, result, self.session)

@@ -40,18 +40,27 @@ class Ask:
     answer: Callable[..., object]
 
 
+@dataclass(eq=False)
+class Draft:
+    """A reply still being written on another thread, for the window to show as it grows."""
+
+    stopped: Callable[[], bool]  # Whether the reply is no longer wanted.
+    text: str = ""
+
+
 @dataclass
 class Fetch:
     """A skill's reply that has to wait on something slow, like the internet.
 
     `work()` may run on another thread, so it can't touch the database. `finish(db, value,
     session)` then receives what it returned, or None if it failed, and returns the reply
-    as usual. The window shows `prompt` in the meantime.
+    as usual. The window shows `prompt` in the meantime, or else `draft` as it's written.
     """
 
-    prompt: str
+    prompt: str | None
     work: Callable[[], object]
     finish: Callable[..., object]
+    draft: Draft | None = None
 
     def get_value(self):
         try:

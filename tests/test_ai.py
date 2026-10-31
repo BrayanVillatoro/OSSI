@@ -436,12 +436,34 @@ class ClientTest(unittest.TestCase):
         path, body = FakeOllama.requests[0]
         self.assertEqual(path, "/api/chat")
         self.assertEqual(body["model"], "llama3.2:latest")
-        self.assertIs(body["stream"], False)
+        self.assertIs(body["stream"], True)
         self.assertEqual(body["format"]["required"], ["command", "reply"])
         self.assertEqual(
             body["messages"],
             [{"role": "system", "content": "be helpful"}, {"role": "user", "content": "hello"}],
         )
+
+    def test_the_reply_arrives_piece_by_piece(self):
+        pieces = ['{"command":"","re', 'ply": "Line', " one\\", 'nTwo \\u00', 'e9 \\"x\\"', '"}']
+        lines = [json.dumps({"message": {"content": piece}}).encode() + b"\n" for piece in pieces]
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.BytesIO(b"".join(lines))
+        seen = []
+        with mock.patch.object(ollama.OPENER, "open", return_value=response):
+            answer = ollama.chat("m", "rules", "now", on_text=seen.append)
+        self.assertEqual(seen, ["", "Line", "Line one", "Line one\nTwo ", 'Line one\nTwo é "x"', 'Line one\nTwo é "x"'])
+        self.assertEqual(answer["reply"], 'Line one\nTwo é "x"')
+
+    def test_a_command_is_not_mistaken_for_the_reply(self):
+        content = json.dumps({"command": 'note "reply": "x"', "reply": "real"})
+        self.assertEqual(ollama.reply_so_far(content), "real")
+
+    def test_an_error_partway_through_counts_as_failing(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.BytesIO(b'{"error": "model ran out of memory"}\n')
+        with mock.patch.object(ollama.OPENER, "open", return_value=response):
+            with self.assertRaises(ValueError):
+                ollama.chat("m", "rules", "now")
 
     def test_an_answer_that_is_not_an_object_is_refused(self):
         with mock.patch.object(FakeOllama, "content", "[1, 2]"):
@@ -483,14 +505,14 @@ class WindowTest(unittest.TestCase):
         release = threading.Event()
         threads = []
 
-        def slow_chat(model, system, message, history):
+        def slow_chat(model, system, message, history, on_text):
             threads.append(threading.current_thread())
             release.wait(5)
             return {"command": "add task call the bank", "reply": ""}
 
         with mock.patch.object(ollama, "chat", slow_chat):
             self.app.run("I should probably ring the bank")
-            self.assertIn("Thinking...", self.app.log.get("1.0", "end"))
+            self.assertIn("Writing a reply", self.app.log.get("1.0", "end"))
             self.app.run("add task something else")
             self.assertIn("something else", self.app.agenda.get("1.0", "end"))
             release.set()
@@ -506,6 +528,91 @@ class WindowTest(unittest.TestCase):
         )
         self.app.run("yes")
         self.assertIn("call the bank", self.app.agenda.get("1.0", "end"))
+        self.assertNotIn("Writing a reply", self.app.log.get("1.0", "end"))
+
+    def run_with_model(self, message, chat):
+        patcher = mock.patch.object(ollama, "chat", chat)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.app.run(message)
+
+    def pump_until(self, condition):
+        deadline = time.time() + 5
+        while not condition() and time.time() < deadline:
+            self.root.update()
+            time.sleep(0.01)
+        self.assertTrue(condition())
+
+    def log_text(self):
+        return self.app.log.get("1.0", "end")
+
+    def test_the_reply_appears_as_it_is_written(self):
+        more = threading.Event()
+
+        def chat(model, system, message, history, on_text):
+            on_text("The ba")
+            more.wait(5)
+            on_text("The bank is")
+            return {"command": "", "reply": "The bank is first."}
+
+        self.run_with_model("what should I do first", chat)
+        self.pump_until(lambda: "The ba" in self.log_text())
+        self.assertNotIn("Writing a reply", self.log_text())
+        more.set()
+        self.pump_until(lambda: not self.app.fetched.empty())
+        self.pump_until(lambda: "The bank is" in self.log_text())
+        self.app.check_fetches()
+
+        self.assertEqual(self.log_text().count("The bank"), 1)
+        self.assertIn("OSSI\nThe bank is first.\n", self.log_text())
+        self.assertNotIn("•", self.log_text())
+        self.assertEqual(self.app.writing, {})
+
+    def test_never_mind_removes_the_reply_and_stops_the_model(self):
+        stopped = threading.Event()
+        started = threading.Event()
+
+        def chat(model, system, message, history, on_text):
+            on_text("The ba")
+            started.set()
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    on_text("The bank")
+                except ai.Stopped:
+                    stopped.set()
+                    raise
+                time.sleep(0.01)
+            return {"command": "", "reply": "too late"}
+
+        self.run_with_model("what should I do first", chat)
+        started.wait(5)
+        self.app.run("never mind")
+        self.pump_until(lambda: "The ba" not in self.log_text())
+        self.assertTrue(stopped.wait(5))
+        self.pump_until(lambda: not self.app.fetched.empty())
+        self.app.check_fetches()
+        self.assertEqual(self.app.session.thinking, 0)
+        self.assertIn(router.NEVER_MIND, self.log_text())
+        self.assertNotIn("too late", self.log_text())
+
+    def test_two_replies_can_be_written_at_once(self):
+        release = threading.Event()
+
+        def chat(model, system, message, history, on_text):
+            on_text(f"on {message}")
+            release.wait(5)
+            return {"command": "", "reply": f"finished {message}"}
+
+        self.run_with_model("question one", chat)
+        self.app.run("question two")
+        self.pump_until(lambda: "on question two" in self.log_text())
+        release.set()
+        self.pump_until(lambda: self.app.fetched.qsize() == 2)
+        self.app.check_fetches()
+        self.assertIn("finished question one", self.log_text())
+        self.assertIn("finished question two", self.log_text())
+        self.assertEqual(self.app.writing, {})
 
 
 if __name__ == "__main__":

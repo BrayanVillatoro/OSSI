@@ -8,19 +8,19 @@ from datetime import datetime
 
 from ossi import ollama, storage
 from ossi.references import ask_which
-from ossi.registry import COMMANDS, Confirm, Fetch, command
+from ossi.registry import COMMANDS, Confirm, Draft, Fetch, command
 from ossi.skills.reminders import upcoming
 from ossi.skills.tasks import open_tasks
 from ossi.when import describe
 
-THINKING = "Thinking... Keep using OSSI in the meantime, or say never mind to stop waiting."
 NOT_UNDERSTOOD = "Sorry, I don't know how to do that yet. Type 'help' to see what I can do."
+PASTE_IN_CMD = "open Command Prompt (search for cmd in the Start menu), paste this and press Enter:"
 NOT_RUNNING = (
-    "I can't reach Ollama. Install it from ollama.com and make sure it's running, then run "
-    f"this in a terminal: ollama pull {ollama.RECOMMENDED_MODEL}"
+    "I can't reach Ollama. Install it from ollama.com and make sure it's running. Then "
+    f"{PASTE_IN_CMD} ollama pull {ollama.RECOMMENDED_MODEL}"
 )
 NO_MODELS = (
-    "Ollama is running but has no models yet. Run this in a terminal, then try again: "
+    f"Ollama is running but has no models yet. To get one, {PASTE_IN_CMD} "
     f"ollama pull {ollama.RECOMMENDED_MODEL}"
 )
 UNAVAILABLE = (
@@ -72,6 +72,10 @@ Upcoming reminders:
 {reminders}"""
 
 
+class Stopped(Exception):
+    """The user stopped waiting for a reply the model is still writing."""
+
+
 def build_instructions(db, now=None):
     now = now or datetime.now()
     commands = [
@@ -117,7 +121,16 @@ def understand(db, text, find_command, session):
             return Confirm(suggestion, intro)
         return f"{intro}{str(answer.get('reply') or '').strip() or NOT_UNDERSTOOD}"
 
-    return Fetch(THINKING, lambda: ollama.chat(model, system, text, history), finish)
+    draft = Draft(lambda: session.canceled_turn >= asked_on)
+
+    def write(reply):
+        if draft.stopped():
+            raise Stopped  # Closing the connection also stops the model working.
+        draft.text = reply
+
+    return Fetch(
+        None, lambda: ollama.chat(model, system, text, history, on_text=write), finish, draft
+    )
 
 
 def save_model(db, model, session=None):
@@ -129,7 +142,7 @@ def save_model(db, model, session=None):
 
 
 def unpulled(model):
-    return f"Ollama doesn't have {model} yet. Run this in a terminal, then try again: ollama pull {model}"
+    return f"Ollama doesn't have {model} yet. To get it, {PASTE_IN_CMD} ollama pull {model}"
 
 
 @command(

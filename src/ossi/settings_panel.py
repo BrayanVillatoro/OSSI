@@ -27,6 +27,8 @@ from ossi.theme import (
 
 OLLAMA_SITE = "https://ollama.com/"
 PULL_COMMAND = f"ollama pull {ollama.RECOMMENDED_MODEL}"
+PASTE_STEP = "Open Command Prompt (search for cmd in the Start menu), press Ctrl+V, then Enter."
+FINISH_STEP = "The download is about 2 GB. When it says success, click Try again."
 SWITCH_WIDTH = 44
 SWITCH_HEIGHT = 24
 KNOB = 18
@@ -235,7 +237,10 @@ class SettingsPanel(tk.Frame):
         elif not models and turning_on:
             self.ai_switch.set(False)
             self.set_ai_status(
-                f"Ollama is running but has no models yet. In a terminal, run: {PULL_COMMAND}",
+                "Ollama is running but has no models yet.\n"
+                f"1. Click Copy command below. It copies: {PULL_COMMAND}\n"
+                f"2. {PASTE_STEP}\n"
+                f"3. {FINISH_STEP}",
                 [("Copy command", self.copy_pull), ("Try again", self.try_again)],
             )
         else:
@@ -258,7 +263,11 @@ class SettingsPanel(tk.Frame):
             )
         else:
             self.set_ai_status(
-                f"Ollama isn't installed. Download it, then run this in a terminal: {PULL_COMMAND}",
+                "Ollama isn't installed yet.\n"
+                "1. Click Download Ollama below and install it.\n"
+                f"2. Click Copy command below. It copies: {PULL_COMMAND}\n"
+                f"3. {PASTE_STEP}\n"
+                f"4. {FINISH_STEP}",
                 [
                     ("Download Ollama", lambda: webbrowser.open(OLLAMA_SITE)),
                     ("Copy command", self.copy_pull),
@@ -286,7 +295,11 @@ class SettingsPanel(tk.Frame):
 
     def copy_pull(self):
         self.app.copy(PULL_COMMAND)
-        self.ai_status.configure(text=f"Copied: {PULL_COMMAND}")
+        self.ai_status.configure(
+            text=f"Copied: {PULL_COMMAND}\n"
+            f"Once Ollama is installed: {PASTE_STEP}\n"
+            f"{FINISH_STEP}"
+        )
 
     def try_again(self):
         turning_on = not storage.get_setting(self.db, "ai_model")

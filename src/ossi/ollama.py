@@ -7,6 +7,7 @@ a long time to answer.
 
 import json
 import os
+import re
 import shutil
 import urllib.request
 from pathlib import Path
@@ -14,7 +15,8 @@ from pathlib import Path
 ADDRESS = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "llama3.2"
 QUICK_TIMEOUT_SECONDS = 5
-# A model has to load first, and this can be slow without a dedicated graphics card.
+# The longest wait for more of the answer. A model has to load before its first word, and
+# this can be slow without a dedicated graphics card.
 ANSWER_TIMEOUT_SECONDS = 180
 # Ignores any proxy set up in Windows, which could otherwise carry messages off this computer.
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -24,6 +26,9 @@ ANSWER_FORMAT = {
     "properties": {"command": {"type": "string"}, "reply": {"type": "string"}},
     "required": ["command", "reply"],
 }
+REPLY_START = re.compile(r'"reply"\s*:\s*"')
+# Stops at the closing quote, or before an escape like \n that has only partly arrived.
+FINISHED_TEXT = re.compile(r'(?:[^"\\]|\\u[0-9a-fA-F]{4}|\\[^u])*')
 
 
 def is_installed():
@@ -43,16 +48,27 @@ def list_models():
     return [model["name"] for model in data["models"] if is_local(model["name"])]
 
 
-def chat(model, system, message, history=()):
+def reply_so_far(content):
+    """The readable part of the `reply` field in JSON that is still arriving."""
+    start = REPLY_START.search(content)
+    if not start:
+        return ""
+    finished = FINISHED_TEXT.match(content, start.end()).group()
+    return json.loads(f'"{finished}"', strict=False)
+
+
+def chat(model, system, message, history=(), on_text=None):
     """Ask the model, and return its answer as a dict with `command` and `reply`.
 
     `history` is the conversation so far, as a list of messages with `role` and `content`.
+    `on_text` is called with the reply so far each time more arrives, and can raise an
+    exception to stop the model.
     """
     if not is_local(model):
         raise ValueError(f"{model} doesn't run on this computer")
     body = {
         "model": model,
-        "stream": False,
+        "stream": True,
         "format": ANSWER_FORMAT,
         "options": {"temperature": 0},
         "messages": [
@@ -66,9 +82,16 @@ def chat(model, system, message, history=()):
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
     )
+    content = ""
     with OPENER.open(request, timeout=ANSWER_TIMEOUT_SECONDS) as response:
-        data = json.load(response)
-    answer = json.loads(data["message"]["content"])
+        for line in response:
+            piece = json.loads(line)
+            if "error" in piece:
+                raise ValueError(piece["error"])
+            content += piece["message"]["content"]
+            if on_text:
+                on_text(reply_so_far(content))
+    answer = json.loads(content)
     if not isinstance(answer, dict):
         raise ValueError("The model didn't answer in the requested format")
     return answer

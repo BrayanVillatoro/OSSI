@@ -138,6 +138,8 @@ class AiSwitchTest(PanelTest):
         self.assertFalse(self.panel.ai_switch.on)
         self.assertIsNone(self.setting("ai_model"))
         self.assertIn("isn't installed", self.status())
+        self.assertIn(PULL_COMMAND, self.status())
+        self.assertIn("Command Prompt", self.status())
         self.assertEqual(
             self.link_texts(self.panel.ai_links), ["Download Ollama", "Copy command", "Try again"]
         )
@@ -163,6 +165,7 @@ class AiSwitchTest(PanelTest):
         self.wait()
         self.panel.copy_pull()
         self.assertEqual(self.root.clipboard_get(), PULL_COMMAND)
+        self.assertIn("Command Prompt", self.status())
         with mock.patch("webbrowser.open") as browser:
             self.root.update()
             self.click_link(self.panel.ai_links, "Download Ollama")
