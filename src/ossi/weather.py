@@ -6,13 +6,26 @@ thread, because a slow connection would freeze it.
 """
 
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
+
+from ossi.when import WEEKDAYS
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+ZIP_URL = "https://api.zippopotam.us/us"
 TIMEOUT_SECONDS = 8
 PLACES_TO_COMPARE = 20
+MOST_CHOICES = 5
+FORECAST_DAYS = 7
+# The biggest place wins outright when it's this many times bigger than the next one, so
+# "Paris" doesn't ask about Texas, but "Springfield" asks which one.
+CLEAR_WINNER = 10
+SATURDAY = 5
+
+COUNTRY_NICKNAMES = {"usa": "us", "uk": "gb", "america": "us"}
 
 STATES = {
     "al": "alabama", "ak": "alaska", "az": "arizona", "ar": "arkansas", "ca": "california",
@@ -51,27 +64,111 @@ def get_json(url, params):
         return json.load(response)
 
 
-def find_place(text):
-    """Look up a city or ZIP code. Returns an empty dict if nothing matches.
+def find_places(text):
+    """Return the places a city or ZIP code could mean.
 
-    The service only searches by name, so "Springfield, IL" is narrowed down here.
+    One is a clear answer, none means nothing matched, and several means it's worth asking.
     """
-    name, _, qualifier = text.partition(",")
-    name, qualifier = name.strip(), qualifier.strip().lower()
+    if text.isdigit() and len(text) == 5:
+        return find_zip(text)
+    for name, qualifier in readings(text):
+        results = search(name)
+        if qualifier:
+            results = [result for result in results if matches_qualifier(result, qualifier)]
+        if results:
+            return choices(named(results, name))
+    return []
+
+
+def named(results, name):
+    """Drop fuzzy matches, like a neighborhood of Paris when searching for Paris.
+
+    Capitals stay so that "Washington" finds Washington D.C. A name spelled differently
+    from every result, like "St Louis" for "St. Louis", keeps them all.
+    """
+    name = name.lower()
+    close = [
+        result
+        for result in results
+        if result["name"].lower() == name
+        or (result.get("feature_code") == "PPLC" and result["name"].lower().startswith(name))
+    ]
+    return close or results
+
+
+def readings(text):
+    """The ways to split text into a name and a state or country, most likely first.
+
+    The service only searches by name, so "Springfield, IL" gets narrowed down here.
+    """
+    if "," in text:
+        name, _, qualifier = text.partition(",")
+        return [(name.strip(), qualifier.strip().lower())]
+    words = text.split()
+    options = []
+    for size in (2, 1):  # "Charleston West Virginia", then "Boston MA"
+        ending = " ".join(words[-size:]).lower()
+        if len(words) > size and (ending in STATES or ending in STATES.values()):
+            options.append((" ".join(words[:-size]), ending))
+    options.append((text, ""))
+    if len(words) > 1:  # "Paris France"
+        options.append((" ".join(words[:-1]), words[-1].lower()))
+    return options
+
+
+def search(name):
     data = get_json(
         GEOCODE_URL, {"name": name, "count": PLACES_TO_COMPARE, "language": "en", "format": "json"}
     )
-    results = data.get("results") or []
-    if qualifier:
-        results = [result for result in results if matches_qualifier(result, qualifier)]
+    return data.get("results") or []
+
+
+def find_zip(code):
     # A five-digit number is usually a US ZIP code, though other countries use them too.
-    if name.isdigit() and len(name) == 5 and not qualifier:
-        results.sort(key=lambda result: result.get("country_code") != "US")
-    return to_place(results[0]) if results else {}
+    results = search(code)
+    american = [result for result in results if result.get("country_code") == "US"]
+    if american:
+        return [to_place(american[0])]
+    # Open-Meteo misses some small towns, so only those lookups go to a second service.
+    place = find_zip_elsewhere(code)
+    if place:
+        return [place]
+    return [to_place(results[0])] if results else []
+
+
+def find_zip_elsewhere(code):
+    try:
+        data = get_json(f"{ZIP_URL}/{code}", {})
+    except urllib.error.HTTPError as error:
+        if error.code == 404:  # This is how the service says there's no such ZIP code.
+            return None
+        raise
+    place = data["places"][0]
+    return {
+        "name": f"{place['place name']}, {place['state']}",
+        "latitude": float(place["latitude"]),
+        "longitude": float(place["longitude"]),
+        "unit": "fahrenheit",
+    }
+
+
+def choices(results):
+    """Pick the one place that's clearly meant, or else list the likely ones."""
+    sized = [result for result in results if result.get("population")] or results
+    sized = sorted(sized, key=lambda result: result.get("population") or 0, reverse=True)
+    places, seen = [], set()
+    for result in sized:
+        place = to_place(result)
+        if place["name"] not in seen:
+            seen.add(place["name"])
+            places.append((place, result.get("population") or 0))
+    if len(places) == 1 or places[0][1] >= CLEAR_WINNER * places[1][1] > 0:
+        return [places[0][0]]
+    return [place for place, _ in places[:MOST_CHOICES]]
 
 
 def matches_qualifier(result, qualifier):
-    wanted = STATES.get(qualifier, qualifier)
+    wanted = STATES.get(qualifier, COUNTRY_NICKNAMES.get(qualifier, qualifier))
     return wanted in (
         (result.get("admin1") or "").lower(),
         (result.get("country") or "").lower(),
@@ -102,7 +199,7 @@ def get_forecast(place):
             ),
             "temperature_unit": place["unit"],
             "timezone": "auto",
-            "forecast_days": 2,
+            "forecast_days": FORECAST_DAYS,
         },
     )
 
@@ -138,3 +235,49 @@ def describe_today(forecast, place):
 def describe_tomorrow(forecast, place):
     conditions, summary = describe_day(forecast, place, 1)
     return f"Tomorrow in {place['name']}: {conditions}, {summary}."
+
+
+def forecast_dates(forecast):
+    return [date.fromisoformat(day) for day in forecast["daily"]["time"]]
+
+
+def describe_weekday(forecast, place, weekday):
+    number = WEEKDAYS.index(weekday)
+    index = next(i for i, day in enumerate(forecast_dates(forecast)) if day.weekday() == number)
+    conditions, summary = describe_day(forecast, place, index)
+    return f"{weekday.capitalize()} in {place['name']}: {conditions}, {summary}."
+
+
+def describe_days(forecast, place, indexes):
+    dates = forecast_dates(forecast)
+    lines = []
+    for index in indexes:
+        conditions, summary = describe_day(forecast, place, index)
+        lines.append(f"{dates[index]:%A}: {conditions}, {summary}")
+    return "\n".join([f"{place['name']}:", *lines])
+
+
+def describe_week(forecast, place):
+    return describe_days(forecast, place, range(len(forecast_dates(forecast))))
+
+
+def describe_weekend(forecast, place):
+    days = [i for i, day in enumerate(forecast_dates(forecast)) if day.weekday() >= SATURDAY]
+    # On a Sunday, the next entry is the following Saturday, which isn't this weekend.
+    if forecast_dates(forecast)[days[0]].weekday() != SATURDAY:
+        days = days[:1]
+    return describe_days(forecast, place, days[:2])
+
+
+def describe(forecast, place, day=None):
+    """Put the forecast for "tomorrow", "friday", "week" or "weekend" into words."""
+    day = (day or "today").lower()
+    if day == "today":
+        return describe_today(forecast, place)
+    if day == "tomorrow":
+        return describe_tomorrow(forecast, place)
+    if day == "week":
+        return describe_week(forecast, place)
+    if day == "weekend":
+        return describe_weekend(forecast, place)
+    return describe_weekday(forecast, place, day)

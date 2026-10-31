@@ -10,35 +10,44 @@ import tkinter as tk
 import traceback
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 from ossi import autostart, instance, notifications, router, storage
 from ossi.drawing import rounded_image
+from ossi.settings_panel import SettingsPanel
 from ossi.skills import briefing
 from ossi.skills.reminders import fire_due, upcoming
 from ossi.skills.tasks import last_completed, open_tasks
+from ossi.theme import (
+    ACCENT,
+    ACCENT_HOVER,
+    BG,
+    BORDER,
+    FAMILY,
+    FONT,
+    MUTED,
+    ON_ACCENT,
+    SIDEBAR,
+    SIDEBAR_SCROLLBAR,
+    SMALL_BOLD,
+    SURFACE,
+    TEXT,
+    add_scrollbar,
+    style_widgets,
+)
 from ossi.when import describe
 
-BG = "#15171C"
-SIDEBAR = "#1C1F26"
-SURFACE = "#262A33"
-BORDER = "#343944"
-TEXT = "#E8EAEE"
-MUTED = "#8D93A0"
-ACCENT = "#4CC9A4"
-ACCENT_HOVER = "#6ED8B9"
-ON_ACCENT = "#0E1A16"
-
-FAMILY = "Segoe UI"
-FONT = (FAMILY, 11)
-SMALL_BOLD = (FAMILY, 9, "bold")
 EXIT_WORDS = ("exit", "quit", "bye")
 ICON = Path(__file__).parent / "assets" / "ossi.ico"
+
+SETTINGS_LINK = "⚙  Settings"
+BACK_LINK = "←  Back to chat"
 
 BUBBLE_MAX_WIDTH = 420
 BOX_HEIGHT = 48
 TICK_MS = 500
 MISSED_AFTER_SECONDS = 60
+AT_BOTTOM = 0.999  # How far down the chat counts as being at the end, from 0 to 1.
 
 # Tcl crashes if its interpreter is freed off the main thread, and a weather lookup could
 # still be running as OSSI quits. Holding the window until Python shuts down prevents that.
@@ -70,13 +79,14 @@ class App:
         if sys.platform == "win32":
             root.iconbitmap(default=str(ICON))
         use_dark_title_bar(root)
-        style_scrollbars(root)
+        style_widgets(root)
         self.menu = tk.Menu(
             root, tearoff=0, bg=SURFACE, fg=TEXT, activebackground=BORDER, activeforeground=TEXT
         )
         self.menu.add_command(label="Copy")
         self.build_sidebar()
         self.build_chat()
+        self.settings = SettingsPanel(root, self)
 
         self.say("Hi! Type 'help' to see what I can do.")
         self.refresh_sidebar()
@@ -125,18 +135,43 @@ class App:
             "due", foreground=ACCENT, font=(FAMILY, 9), spacing3=6, lmargin1=2, lmargin2=2
         )
         self.agenda.grid(row=2, column=0, sticky="nsew", padx=(20, 4), pady=(8, 10))
-        add_scrollbar(frame, self.agenda, row=2, column=1, pady=(8, 10))
+        add_scrollbar(frame, self.agenda, row=2, column=1, pady=(8, 10), style=SIDEBAR_SCROLLBAR)
 
         self.undo_label = tk.Label(
             frame, bg=SIDEBAR, fg=ACCENT, font=(FAMILY, 10), cursor="hand2", anchor="w"
         )
-        self.undo_label.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
+        self.undo_label.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 8))
         self.undo_label.bind("<Button-1>", lambda event: self.run("undo"))
         self.undo_label.bind("<Enter>", lambda event: self.undo_label.configure(fg=ACCENT_HOVER))
         self.undo_label.bind("<Leave>", lambda event: self.undo_label.configure(fg=ACCENT))
 
+        self.settings_label = tk.Label(
+            frame, bg=SIDEBAR, fg=MUTED, font=(FAMILY, 10), cursor="hand2", anchor="w"
+        )
+        self.settings_label.grid(row=4, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
+        self.settings_label.bind("<Button-1>", lambda event: self.toggle_settings())
+        self.settings_label.bind("<Enter>", lambda event: self.settings_label.configure(fg=TEXT))
+        self.settings_label.bind("<Leave>", lambda event: self.settings_label.configure(fg=MUTED))
+        self.settings_label.configure(text=SETTINGS_LINK)
+
+    def toggle_settings(self):
+        """Swap the chat for the Settings page, or back again."""
+        panel = self.settings
+        panel.visible = not panel.visible
+        if panel.visible:
+            self.chat.grid_remove()
+            panel.grid(row=0, column=1, sticky="nsew")
+            panel.refresh()
+            self.settings_label.configure(text=BACK_LINK)
+        else:
+            panel.grid_remove()
+            self.chat.grid()
+            self.settings_label.configure(text=SETTINGS_LINK)
+            self.entry.focus_set()
+            self.log.see("end")
+
     def build_chat(self):
-        frame = tk.Frame(self.root, bg=BG)
+        frame = self.chat = tk.Frame(self.root, bg=BG)
         frame.grid(row=0, column=1, sticky="nsew")
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
@@ -187,6 +222,7 @@ class App:
         )
         self.entry_item = self.box.create_window(16, BOX_HEIGHT // 2, anchor="w", window=self.entry)
         self.entry.bind("<Return>", lambda event: self.send())
+        self.entry.bind("<Control-a>", self.select_all_typed)
         self.entry.bind("<FocusIn>", lambda event: self.draw_box(ACCENT))
         self.entry.bind("<FocusOut>", lambda event: self.draw_box(BORDER))
 
@@ -217,6 +253,11 @@ class App:
         self.box_border = BORDER
         self.box.bind("<Configure>", lambda event: self.draw_box(self.box_border))
 
+    def select_all_typed(self, event):
+        self.entry.selection_range(0, "end")
+        self.entry.icursor("end")
+        return "break"  # Tk's own Ctrl+A only moves the cursor to the start of the line.
+
     def draw_box(self, border):
         self.box_border = border
         width = self.box.winfo_width()
@@ -227,14 +268,17 @@ class App:
         self.box.coords(self.send_item, width - 8, BOX_HEIGHT // 2)
         self.box.itemconfigure(self.entry_item, width=width - 108)
 
-    def say(self, text):
+    def say(self, text, keep_place=False):
+        """Add a reply. With keep_place, don't pull someone away from reading older messages."""
+        follow = not keep_place or self.log.yview()[1] >= AT_BOTTOM
         self.reply_count += 1
         self.log.configure(state="normal")
         self.log.insert(
             "end", "OSSI\n", "name", text, ("ossi", f"reply{self.reply_count}"), "\n", "ossi"
         )
         self.log.configure(state="disabled")
-        self.log.see("end")
+        if follow:
+            self.log.see("end")
 
     def echo(self, text):
         bubble = tk.Canvas(
@@ -360,17 +404,22 @@ class App:
             self.say_result(fetch.finish(self.db, value, self.session))
 
     def say_result(self, result):
-        self.say(router.render(self.db, result, self.session))
-        self.refresh_sidebar()
+        reply = router.render(self.db, result, self.session)
+        if reply is not None:
+            self.say(reply, keep_place=True)
+            self.refresh_sidebar()
+            if self.settings.visible:
+                self.settings.refresh()
 
     def is_in_use(self):
         # Tk reports no focus window while another app has the focus.
         return self.root.state() == "normal" and bool(self.root.tk.call("focus"))
 
     def check_briefing(self):
-        if self.is_in_use() and briefing.is_due(self.db):
+        # While Settings is open the chat is out of sight, so the briefing waits.
+        if self.is_in_use() and not self.settings.visible and briefing.is_due(self.db):
             briefing.mark_given(self.db)
-            self.say_result(briefing.give_briefing(self.db, self.session))
+            self.say_result(briefing.give_briefing(self.db, self.session, automatic=True))
 
     def start(self, listener):
         """Begin watching for reminders and launches. Closing the window now hides it."""
@@ -382,6 +431,9 @@ class App:
         try:
             if self.listener.poll():
                 self.show()
+            if self.listener.replaced:
+                self.root.destroy()  # Updated code is starting up to take over.
+                return
             try:
                 self.check_reminders()
                 self.check_briefing()
@@ -392,7 +444,8 @@ class App:
             if datetime.now().date() != self.shown_date:
                 self.refresh_sidebar()
         finally:
-            self.root.after(TICK_MS, self.tick)
+            if not self.listener.replaced:
+                self.root.after(TICK_MS, self.tick)
 
     def hide(self):
         self.root.withdraw()
@@ -409,7 +462,8 @@ class App:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
-        self.entry.focus_set()
+        if not self.settings.visible:
+            self.entry.focus_set()
         self.log.see("end")
 
     def check_reminders(self):
@@ -421,9 +475,12 @@ class App:
         for row in fired:
             if now - row["due_at"] > MISSED_AFTER_SECONDS:
                 missed += 1
-                self.say(f"Missed reminder from {describe(row['due_at'])}: {row['message']}")
+                self.say(
+                    f"Missed reminder from {describe(row['due_at'])}: {row['message']}",
+                    keep_place=True,
+                )
             else:
-                self.say(f"Reminder: {row['message']}")
+                self.say(f"Reminder: {row['message']}", keep_place=True)
         if len(fired) > 1:
             self.toast(f"{len(fired)} reminders", "; ".join(row["message"] for row in fired))
         else:
@@ -454,6 +511,7 @@ class App:
         rows = open_tasks(self.db)
         self.task_ids = [row["id"] for row in rows]
         reminders = upcoming(self.db)
+        scrolled_to = self.agenda.yview()[0]
 
         self.agenda.configure(state="normal", cursor="arrow")
         self.agenda.delete("1.0", "end")
@@ -477,6 +535,7 @@ class App:
         if not rows:
             self.agenda.insert("end", "All clear. Type 'add task' and a title to add one.", "empty")
         self.agenda.configure(state="disabled")
+        self.agenda.yview_moveto(scrolled_to)
 
         last = last_completed(self.db)
         if last:
@@ -534,40 +593,6 @@ def use_dark_title_bar(root):
     ctypes.windll.dwmapi.DwmSetWindowAttribute(
         hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(enabled), ctypes.sizeof(enabled)
     )
-
-
-def style_scrollbars(root):
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    style.layout(
-        "Vertical.TScrollbar",
-        [
-            (
-                "Vertical.Scrollbar.trough",
-                {"sticky": "ns", "children": [("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]},
-            )
-        ],
-    )
-    flat = dict(bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
-    style.configure("Vertical.TScrollbar", background=BORDER, troughcolor=BG, arrowsize=8, **flat)
-    style.map("Vertical.TScrollbar", background=[("active", MUTED)])
-
-
-def add_scrollbar(parent, text, row, column, pady=0):
-    """Attach a scrollbar that only shows when there's something to scroll."""
-    scrollbar = ttk.Scrollbar(parent, command=text.yview)
-    # Reserving the column keeps the text from reflowing when the bar hides.
-    parent.columnconfigure(column, minsize=10)
-    scrollbar.grid(row=row, column=column, sticky="ns", pady=pady)
-
-    def update(first, last):
-        scrollbar.set(first, last)
-        if float(first) <= 0 and float(last) >= 1:
-            scrollbar.grid_remove()
-        else:
-            scrollbar.grid()
-
-    text.configure(yscrollcommand=update)
 
 
 def main(background=False):

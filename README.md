@@ -8,7 +8,7 @@ A personal assistant desktop app that runs on your own computer. No AI key, no a
 
 - **Daily briefing:** the first time you open the window each day, see today's reminders and
   open tasks, plus the weather if you've set a location.
-- **Weather:** ask for today or tomorrow, here or anywhere else.
+- **Weather:** ask about any day in the next week, here or anywhere else.
 - **Reminders:** get a Windows notification at the time you ask for, even with the window closed.
 - **Tasks:** add tasks by typing, and click a circle to complete one. Undo brings it back.
 - **Notes:** save quick notes and search them later.
@@ -22,7 +22,7 @@ Your data stays in a local SQLite file at `~/.ossi/ossi.db`, outside this repo. 
 `OSSI_HOME` environment variable to store it somewhere else. Before an update changes the
 database's structure, OSSI saves a copy next to it, named like `ossi.db.v1.bak`.
 
-Weather is the only feature that uses the internet, and it's off until you set a location or
+Weather is the only feature that uses the internet, and it stays off until you set a location or
 ask about a specific place. See [Weather and your privacy](#weather-and-your-privacy).
 
 ## Get started
@@ -39,7 +39,9 @@ powershell -ExecutionPolicy Bypass -File scripts\create_shortcut.ps1
 
 ## Using the app
 
-Type in the box at the bottom of the window and press Enter.
+Type in the box at the bottom of the window and press Enter. Click **Settings** at the bottom of
+the sidebar to change the local AI, your location, temperature units, the daily briefing and
+starting at login. Each setting also has a typed command, and both do the same thing.
 
 | Type | What happens |
 | --- | --- |
@@ -48,7 +50,9 @@ Type in the box at the bottom of the window and press Enter.
 | `set my location to 02108` | Sets your location by ZIP code, or by city like `Boston, MA` |
 | `forget my location` | Removes your location and stops the automatic weather |
 | `weather` or `will it rain tomorrow` | Shows the weather for your location |
+| `weather friday`, `weather this week`, `weather this weekend` | Shows other days, up to a week out |
 | `what's the weather in Paris` | Shows the weather somewhere else |
+| `use celsius` or `use fahrenheit` | Chooses how temperatures are shown |
 | `remind me tomorrow at 3pm to call the bank` | Sets a reminder |
 | `remind me to check the oven in 20 minutes` | Sets a reminder, with the time at the end |
 | `reminders` | Lists upcoming reminders |
@@ -79,16 +83,48 @@ The briefing appears once a day, the first time you're using the OSSI window aft
 started in the background, it waits until you open the window. After a briefing, follow-ups like
 `finish the second one` work on the tasks it listed.
 
+The first daily briefing also offers once to start OSSI at login. Nothing changes unless you
+answer yes.
+
 ### Weather and your privacy
 
 Weather comes from [Open-Meteo](https://open-meteo.com/), a free service that needs no key or
 account. OSSI sends it the place you typed to find its coordinates, then those coordinates to get
-the forecast. As with any website, the service can also see your IP address. Your tasks, notes and
-reminders are never sent.
+the forecast. If Open-Meteo doesn't recognize a ZIP code, which happens with some small towns, OSSI
+sends that ZIP code to [Zippopotam](https://zippopotam.us/), another free service. As with any
+website, these services can also see your IP address. Your tasks, notes and reminders are never
+sent.
 
 With a location set, OSSI checks the weather for each briefing and when you ask. It doesn't check
 in the background otherwise. With no location set, it only connects when you name a place, like
-`weather in Paris`. Temperatures are in Fahrenheit for US locations and Celsius elsewhere.
+`weather in Paris`. Temperatures start in Fahrenheit for US locations and Celsius elsewhere.
+
+If a city name could mean several places of similar size, like Springfield, OSSI asks which one.
+If one place is much bigger, OSSI picks it and tells you which it chose. Add a state or country to
+be exact: `Portland, ME`, `Portland Maine` or `Paris France`.
+
+### Local AI (optional)
+
+OSSI works fully without AI. To have it handle messages its commands don't understand, like
+`I need to call the bank sometime tomorrow`, run a model on your own computer with
+[Ollama](https://ollama.com/). There's no key or account, and your messages stay on your computer.
+
+1. Install Ollama, then download a model in a terminal: `ollama pull llama3.2`. That's about 2 GB.
+2. In OSSI, click **Settings** and turn on **Use a local AI model**. It tells you what's missing
+   if Ollama isn't ready, and lets you pick a model if you have several. You can also type
+   `turn on ai`, `turn off ai` and `ai status`.
+
+OSSI tries its own commands and typo corrections first, so those stay instant. For anything else,
+the model sees your message, the last few messages of the conversation, the time, and your open
+tasks and upcoming reminders. It doesn't see your saved notes or location, unless they came up in
+those recent messages. It can answer in words or suggest one of OSSI's commands, and OSSI asks
+before running a suggestion. It can't change your settings, and it never touches the database
+itself. The conversation is only kept in memory while OSSI runs.
+
+Models can get things wrong, so check what it suggests. Answers can take a while on a computer
+without a dedicated graphics card. You can keep using the window in the meantime, and a late answer
+says which message it's about. Say `never mind` to stop waiting. OSSI refuses Ollama's online
+models, because those would send your messages elsewhere.
 
 ### Talking to OSSI
 
@@ -104,8 +140,8 @@ You don't have to type commands exactly:
 - **Missing details:** `remind me to pay rent` makes OSSI ask when. Say `never mind` to drop a
   question, or type any other command to move on.
 
-OSSI only remembers follow-ups while it's running, and the single commands you run in a
-terminal can't answer its questions.
+OSSI only remembers follow-ups while it's running. In a terminal, a command that asks a question
+waits for your answer, and a follow-up like `finish it` needs to be part of that same exchange.
 
 ### Reminders
 
@@ -149,7 +185,9 @@ ossi add task call the bank   # run one command without opening the window
 ```
 OSSI.pyw        Double-click to open the app
 src/ossi/
-  gui.py        Desktop window, including its colors
+  gui.py        Desktop window
+  settings_panel.py  The Settings page
+  theme.py      The window's colors and fonts
   drawing.py    Smooth rounded shapes for the window
   cli.py        Terminal commands
   router.py     Matches text to a command and tracks the conversation
@@ -159,6 +197,7 @@ src/ossi/
   storage.py    SQLite connection and database upgrades
   when.py       Understands times like "tomorrow at 3pm"
   weather.py    Gets the forecast from Open-Meteo
+  ollama.py     Talks to a local AI model
   notifications.py  Windows notifications
   instance.py   Keeps one copy running and reopens its window
   autostart.py  Starts OSSI at login
@@ -211,11 +250,9 @@ The window tests open a hidden window, so they need a desktop session.
 ## Roadmap
 
 1. **Done:** desktop app, tasks, notes, time and date, reminders, typos and follow-ups, daily
-   briefing, weather
+   briefing, weather, optional local AI
 2. **Computer control:** open apps and websites, organize the Downloads folder
-3. **Local AI (optional):** a model running through Ollama handles whatever the patterns
-   don't match, still with no key. `router.handle` is where it plugs in.
-4. **Voice:** offline speech recognition and text to speech
+3. **Voice:** offline speech recognition and text to speech
 
 ## License
 

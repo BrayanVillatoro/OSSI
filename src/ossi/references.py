@@ -2,6 +2,8 @@
 
 import difflib
 
+from ossi.registry import Ask
+
 ORDINALS = {
     "first": 0,
     "1st": 0,
@@ -72,3 +74,17 @@ def by_position(position, rows, listing):
 def which_one(rows, label):
     lines = "\n".join(f"{row['id']}. {row[label]}" for row in rows)
     return f"Which one?\n{lines}"
+
+
+def ask_which(items, then):
+    """Ask which of several named items was meant, then call `then(db, item, session)`."""
+    rows = [{"id": number, "name": item["name"]} for number, item in enumerate(items, start=1)]
+    ids = [row["id"] for row in rows]
+
+    def answer(db, text, session):
+        matches = resolve(text, rows, "name", listing=ids)
+        if len(matches) == 1:
+            return then(db, items[matches[0]["id"] - 1], session)
+        return Ask(f"I didn't catch that. {which_one(rows, 'name')}", answer)
+
+    return Ask(which_one(rows, "name"), answer)

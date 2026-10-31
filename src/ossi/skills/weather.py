@@ -3,11 +3,15 @@
 import json
 
 from ossi import storage, weather
+from ossi.references import ask_which
 from ossi.registry import Ask, Fetch, command
+from ossi.when import WEEKDAYS
 
 CHECKING = "Checking the weather..."
 UNREACHABLE = "I couldn't reach the weather service. Check your connection and try again."
 HOW_TO = "Type 'set my location to' and your city or ZIP code, and I'll check the weather."
+DAY = rf"today|tomorrow|{'|'.join(WEEKDAYS)}|week|weekend"
+DAY_WORDS = r"(?:for |on |this |the )*"
 
 
 def saved_location(db):
@@ -15,15 +19,27 @@ def saved_location(db):
     return json.loads(value) if value else None
 
 
-def forecast_text(place, day=None):
-    forecast = weather.get_forecast(place)
-    if day and day.lower() == "tomorrow":
-        return weather.describe_tomorrow(forecast, place)
-    return weather.describe_today(forecast, place)
+def preferred_unit(db):
+    return storage.get_setting(db, "temperature_unit")
+
+
+def forecast_text(place, day=None, unit=None):
+    """Fetch and describe a forecast. A chosen unit overrides the place's usual one."""
+    place = {**place, "unit": unit} if unit else place
+    return weather.describe(weather.get_forecast(place), place, day)
+
+
+def not_found(place):
+    return f"I can't find a place called '{place}'. Try a city and state, or a ZIP code."
 
 
 def ask_location(db, text, session):
     return set_location(db, session, text)
+
+
+def save_location(db, place, session=None):
+    storage.set_setting(db, "location", json.dumps(place))
+    return f"Your location is now {place['name']}."
 
 
 @command(
@@ -40,14 +56,16 @@ def set_location(db, session, place=None):
         if found is None:
             return UNREACHABLE
         if not found:
-            return f"I can't find a place called '{place}'. Try a city and state, or a ZIP code."
-        storage.set_setting(db, "location", json.dumps(found))
-        reply = f"Your location is now {found['name']}."
-        if "," not in place and not place.isdigit():
+            return not_found(place)
+        if len(found) > 1:
+            return ask_which(found, save_location)
+        reply = save_location(db, found[0])
+        gave_only_a_name = weather.readings(place) == [(place, "")]
+        if gave_only_a_name and not place.isdigit():
             reply += " If that's the wrong one, add the state, like 'Springfield, IL'."
         return reply
 
-    return Fetch("Looking that up...", lambda: weather.find_place(place), finish)
+    return Fetch("Looking that up...", lambda: weather.find_places(place), finish)
 
 
 @command(
@@ -70,25 +88,49 @@ def forget_location(db):
 
 
 @command(
+    "use celsius or use fahrenheit",
+    r"(?:use|switch to|change to|show|show me) (?P<unit>celsius|fahrenheit)",
+    r"(?:set|change) (?:the )?(?:units?|temperatures?) to (?P<unit>celsius|fahrenheit)",
+)
+def set_unit(db, unit):
+    storage.set_setting(db, "temperature_unit", unit.lower())
+    return f"OK, I'll show temperatures in {unit.capitalize()}."
+
+
+@command(
     "weather",
     r"(?:(?:what's|whats|what is|how's|hows|how is|check|show me|get) )?(?:the )?"
     r"(?:weather|forecast)(?: like)?"
-    r"(?: (?:in|for|at) (?!(?:today|tomorrow)$)(?P<place>.+?))?"
-    r"(?: (?:for )?(?P<day>today|tomorrow))?(?: like)?",
-    r"(?:is it going to|will it|is it gonna) (?:rain|snow)(?: (?P<day>today|tomorrow))?",
+    rf"(?: (?:in|for|at) (?!{DAY_WORDS}(?:{DAY})$)(?P<place>.+?))?"
+    rf"(?: (?:like )?{DAY_WORDS}(?P<day>{DAY}))?(?: like)?",
+    rf"(?:is it going to|will it|is it gonna) (?:rain|snow)(?: {DAY_WORDS}(?P<day>{DAY}))?",
 )
 def show_weather(db, place=None, day=None):
     saved = saved_location(db)
     if not place and not saved:
         return HOW_TO
+    unit = preferred_unit(db)
 
     def work():
-        found = weather.find_place(place) if place else saved
-        return forecast_text(found, day) if found else ""
+        found = weather.find_places(place) if place else [saved]
+        # A list of choices needs an answer before there's a forecast to get.
+        return found, forecast_text(found[0], day, unit) if len(found) == 1 else None
 
-    def finish(db, text, session):
-        if text is None:
+    def finish(db, result, session):
+        if result is None:
             return UNREACHABLE
-        return text or f"I can't find a place called '{place}'."
+        found, text = result
+        if not found:
+            return not_found(place)
+        if len(found) > 1:
+            return ask_which(found, after_choosing)
+        return text
+
+    def after_choosing(db, chosen, session):
+        return Fetch(
+            CHECKING,
+            lambda: forecast_text(chosen, day, unit),
+            lambda db, text, session: text or UNREACHABLE,
+        )
 
     return Fetch(CHECKING, work, finish)

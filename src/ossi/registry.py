@@ -7,6 +7,9 @@ from typing import Callable
 
 COMMANDS = []
 
+YES = {"yes", "y", "yeah", "yep", "yup", "sure", "ok", "okay", "correct", "right"}
+NO = {"no", "n", "nope", "nah", "wrong"}
+
 
 @dataclass
 class Command:
@@ -22,6 +25,7 @@ class Confirm:
     """A skill's reply that asks whether this corrected command is what the user meant."""
 
     command: str
+    intro: str = ""  # Shown before the question, to say what it's about.
 
 
 @dataclass

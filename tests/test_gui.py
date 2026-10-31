@@ -181,13 +181,22 @@ class GuiTest(unittest.TestCase):
 
     def test_sidebar_refreshes_when_the_day_changes(self):
         self.app.shown_date = None
-        self.app.listener = mock.Mock(poll=lambda: False)
+        self.app.listener = mock.Mock(poll=lambda: False, replaced=False)
         with mock.patch.object(self.root, "after"):
             self.app.tick()
         self.assertEqual(self.app.shown_date, datetime.now().date())
 
+    def test_being_replaced_closes_the_window_and_stops_ticking(self):
+        self.app.listener = mock.Mock(poll=lambda: False, replaced=True)
+        with mock.patch.object(self.root, "after") as after, mock.patch.object(
+            self.root, "destroy"
+        ) as destroy:
+            self.app.tick()
+        destroy.assert_called_once()
+        after.assert_not_called()
+
     def test_tick_keeps_running_after_an_error(self):
-        self.app.listener = mock.Mock()
+        self.app.listener = mock.Mock(replaced=False)
         self.app.listener.poll.side_effect = ValueError
         scheduled = []
         with mock.patch.object(self.root, "after", lambda ms, fn: scheduled.append(fn)):
@@ -211,6 +220,52 @@ class GuiTest(unittest.TestCase):
         self.type_and_send("add task " + "x" * 80)
         self.app.complete(1)
         self.assertLess(len(self.app.undo_label.cget("text")), 45)
+
+    def test_sidebar_keeps_its_place_when_it_refreshes(self):
+        for number in range(40):
+            self.db.execute("INSERT INTO tasks (title) VALUES (?)", (f"task {number}",))
+        self.db.commit()
+        self.root.geometry("800x400")
+        self.app.refresh_sidebar()
+        self.root.update()
+        self.app.agenda.yview_moveto(0.5)
+        place = self.app.agenda.yview()[0]
+        self.assertGreater(place, 0)
+        self.app.refresh_sidebar()
+        self.assertAlmostEqual(self.app.agenda.yview()[0], place, places=1)
+
+    def test_reading_older_messages_is_not_interrupted(self):
+        for number in range(60):
+            self.app.say(f"message {number}")
+        self.root.update()
+        self.app.log.yview_moveto(0.2)
+        place = self.app.log.yview()[0]
+
+        self.app.say("arrived late", keep_place=True)
+        self.assertAlmostEqual(self.app.log.yview()[0], place, places=1)
+
+        self.app.say("a normal reply")
+        self.root.update()
+        self.assertGreaterEqual(self.app.log.yview()[1], gui.AT_BOTTOM)
+
+        self.app.say("arrived while at the end", keep_place=True)
+        self.root.update()
+        self.assertGreaterEqual(self.app.log.yview()[1], gui.AT_BOTTOM)
+
+    def test_ctrl_a_selects_everything_typed(self):
+        self.app.entry.insert(0, "some text")
+        self.assertEqual(self.app.select_all_typed(None), "break")
+        self.assertEqual(self.app.entry.selection_get(), "some text")
+
+    def test_a_canceled_answer_says_nothing(self):
+        before = self.transcript()
+        self.app.say_result(None)
+        self.assertEqual(self.transcript(), before)
+
+    def test_help_lines_up_with_other_replies(self):
+        self.app.run("help")
+        self.assertNotIn("  add task", self.transcript())
+        self.assertIn("add task <title>", self.transcript())
 
     def test_copy_puts_text_on_the_clipboard(self):
         self.app.copy("hello")

@@ -4,9 +4,10 @@ from datetime import datetime
 
 from ossi import storage
 from ossi.registry import Fetch, command
+from ossi.skills import startup
 from ossi.skills.reminders import upcoming
 from ossi.skills.tasks import open_tasks
-from ossi.skills.weather import CHECKING, forecast_text, saved_location
+from ossi.skills.weather import CHECKING, forecast_text, preferred_unit, saved_location
 from ossi.when import describe
 
 # A window left open overnight shouldn't brief an empty room at midnight.
@@ -30,7 +31,7 @@ def reminders_section(db, session, now):
     session.listing["reminder"] = [row["id"] for row in today or rows]
     if today:
         lines = [
-            f"{row['id']}. {describe(row['due_at'], now).removeprefix('today at ')}: {row['message']}"
+            f"{describe(row['due_at'], now).removeprefix('today at ')}: {row['message']}"
             for row in today
         ]
         return "\n".join(["Reminders today:", *lines])
@@ -79,15 +80,17 @@ def compose(db, session, weather_text, location, now=None):
     r"what(?:'?s| is) on (?:my calendar|for) today",
     r"what do i have (?:on )?today",
 )
-def give_briefing(db, session=None):
+def give_briefing(db, session=None, automatic=False):
+    def finish(db, weather_text, session):
+        text = compose(db, session, weather_text, location)
+        # The daily one is the moment to bring this up, not when someone asks for a briefing.
+        return startup.offer(db, text) if automatic and startup.should_offer(db) else text
+
     location = saved_location(db)
     if not location:
-        return compose(db, session, None, None)
-    return Fetch(
-        CHECKING,
-        lambda: forecast_text(location),
-        lambda db, text, session: compose(db, session, text, location),
-    )
+        return finish(db, None, session)
+    unit = preferred_unit(db)
+    return Fetch(CHECKING, lambda: forecast_text(location, None, unit), finish)
 
 
 @command(

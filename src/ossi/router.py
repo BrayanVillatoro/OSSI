@@ -5,14 +5,17 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from ossi import fuzzy, skills  # noqa: F401  (importing skills registers every skill)
-from ossi.registry import COMMANDS, Ask, Confirm, Fetch
+from ossi.registry import COMMANDS, NO, YES, Ask, Confirm, Fetch
+from ossi.skills import ai
 
-FALLBACK = "Sorry, I don't know how to do that yet. Type 'help' to see what I can do."
+FALLBACK = ai.NOT_UNDERSTOOD
 NEVER_MIND = "OK, never mind."
 
-YES = {"yes", "y", "yeah", "yep", "yup", "sure", "ok", "okay", "correct", "right"}
-NO = {"no", "n", "nope", "nah", "wrong"}
 DISMISS = {"never mind", "nevermind", "forget it", "cancel", "stop"}
+# "cancel" alone means canceling a reminder unless OSSI just asked a question.
+STOP_WAITING = DISMISS - {"cancel"}
+MOST_REMEMBERED_MESSAGES = 12
+MOST_REMEMBERED_CHARACTERS = 500
 
 LEADING_FILLER = re.compile(
     r"^(?:(?:hey|hi|hello|ok|okay|yo|oh|um|so|and|also|actually)\b[, ]*)*(?:ossi\b[, ]*)?"
@@ -31,6 +34,18 @@ class Session:
     focus: dict = field(default_factory=dict)  # The task or reminder "it" refers to.
     listing: dict = field(default_factory=dict)  # The order "the second one" refers to.
     defer: Callable[[Fetch], None] | None = None  # Runs slow work without blocking the caller.
+    history: list = field(default_factory=list)  # Recent messages, for the AI's context.
+    turn: int = 0  # How many messages the user has sent.
+    thinking: int = 0  # How many answers the AI still owes.
+    canceled_turn: int = 0  # The AI's answers to messages up to this one are unwanted.
+
+
+def remember(session, role, text):
+    entry = {"role": role, "content": text[:MOST_REMEMBERED_CHARACTERS]}
+    # A confirmed command replies through two layers, which shouldn't count twice.
+    if not session.history or session.history[-1] != entry:
+        session.history.append(entry)
+    del session.history[:-MOST_REMEMBERED_MESSAGES]
 
 
 def clean(text):
@@ -59,18 +74,22 @@ def run(db, found, session):
 
 def render(db, result, session):
     """Turn a skill's result into text, remembering any question it asks."""
-    if isinstance(result, Confirm):
-        session.pending = result
-        return f"Did you mean: {result.command}?"
-    if isinstance(result, Ask):
-        session.pending = result
-        return result.prompt
     if isinstance(result, Fetch):
         if session.defer:
             session.defer(result)
             return result.prompt
         return render(db, result.finish(db, result.get_value(), session), session)
-    return result
+    if isinstance(result, Confirm):
+        session.pending = result
+        reply = f"{result.intro}Did you mean: {result.command}?"
+    elif isinstance(result, Ask):
+        session.pending = result
+        reply = result.prompt
+    else:
+        reply = result
+    if reply is not None:  # None means there's nothing to say, like a canceled AI answer.
+        remember(session, "assistant", reply)
+    return reply
 
 
 def answer_pending(db, pending, text, session):
@@ -87,9 +106,14 @@ def handle(db, text, session=None):
     session = Session() if session is None else session
     pending, session.pending = session.pending, None
     text = clean(text)
+    session.turn += 1
+    remember(session, "user", text)
 
+    if session.thinking and text.lower() in STOP_WAITING:
+        session.canceled_turn = session.turn
+        return render(db, NEVER_MIND, session)
     if pending and text.lower() in DISMISS:
-        return NEVER_MIND
+        return render(db, NEVER_MIND, session)
 
     stripped = strip_filler(text)
     found = find_command(text) or find_command(stripped)
@@ -104,4 +128,10 @@ def handle(db, text, session=None):
     suggestion = fuzzy.suggest(stripped or text, lambda c: find_command(c) is not None)
     if suggestion:
         return render(db, Confirm(suggestion), session)
-    return FALLBACK
+
+    def find_suggested(command):
+        command = clean(command)
+        return find_command(command) or find_command(strip_filler(command))
+
+    result = ai.understand(db, text, find_suggested, session)
+    return render(db, FALLBACK if result is None else result, session)
