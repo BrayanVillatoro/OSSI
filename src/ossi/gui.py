@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
 
-from ossi import autostart, desktop, instance, notifications, router, storage
+from ossi import autostart, desktop, instance, notifications, router, storage, updater
 from ossi.drawing import rounded_image
 from ossi.registry import Fetch
 from ossi.settings_panel import SettingsPanel
@@ -568,6 +568,11 @@ class App:
         if self.is_in_use() and not self.settings.visible and briefing.is_due(self.db):
             briefing.mark_given(self.db)
             self.say_result(briefing.give_briefing(self.db, self.session, automatic=True))
+
+    def restart_updated(self):
+        """Open the updated OSSI, which replaces this copy within a moment."""
+        self.talk.end()
+        updater.start_new_copy()
 
     def check_desktop_offer(self):
         if not self.is_in_use() or not desktop.should_offer(self.db):

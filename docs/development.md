@@ -37,6 +37,24 @@ It uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) to recognize
 [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) for the voice, and
 [sounddevice](https://python-sounddevice.readthedocs.io/) for the microphone and speakers.
 
+## Publish an update
+
+Pushing to GitHub doesn't reach anyone's copy. People only get what you publish as a release:
+
+1. Run the tests, and try the app. A release goes to everyone who clicks **Update now**.
+2. Raise `__version__` in `src/ossi/__init__.py`, like `1.0.0` to `1.0.1`, then commit and push.
+3. Go to [New release](https://github.com/BrayanVillatoro/OSSI/releases/new). Create a tag with the
+   same version, like `v1.0.1`, write what changed, and click **Publish release**. Don't mark it
+   as a pre-release, because OSSI ignores those.
+
+OSSI refuses a release if its tag and `__version__` don't match, if files are missing, or if the
+code can't be imported, and leaves the current version in place. It can't catch a bug that only
+shows up later, but the previous version stays in `.previous_version/` until the next update. An
+update replaces every top-level item the release contains, including `src/`, so any changes made
+there by hand move to that folder too.
+
+A copy with a `.git` folder never updates itself, so your working copy is safe.
+
 ## Project layout
 
 ```
@@ -62,6 +80,7 @@ src/ossi/
   instance.py   Keeps one copy running, and replaces it after an update
   autostart.py  Starts OSSI at login
   desktop.py    Adds OSSI to the Desktop with its icon
+  updater.py    Updates OSSI to the newest release on GitHub
   skills/       One file per skill, loaded automatically
   assets/       The app icons
 scripts/        Generates the icons

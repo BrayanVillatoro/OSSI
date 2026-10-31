@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ossi"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Personal assistant that runs locally, with no AI key"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,9 @@ ossi = "ossi.cli:main"
 
 [project.gui-scripts]
 ossi-gui = "ossi.gui:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "ossi.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

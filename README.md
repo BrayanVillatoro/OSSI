@@ -16,14 +16,17 @@ A personal assistant desktop app that runs on your own computer. No AI key, no a
 OSSI only understands what it's been taught, but it copes with typos, polite wording and follow-ups
 like `finish it`.
 
-Your data stays in a local file, `~/.ossi/ossi.db`, outside this repo.
+Your data stays in a local file, `~/.ossi/ossi.db`, outside this repo. OSSI only uses the internet
+for weather, downloading the optional add-ons, and checking for updates when you ask. Your tasks,
+notes and reminders are never sent.
 
 ## Get started
 
 You need Windows and Python 3.11 or newer. There's nothing else to install, unless you want the
 optional [Local AI](#local-ai-optional) or [Talking](#talking-optional).
 
-Double-click `OSSI.pyw` to open the app. The first time, OSSI offers to add itself to your Desktop
+[Download the latest release](https://github.com/BrayanVillatoro/OSSI/releases/latest), unzip it,
+and double-click `OSSI.pyw` to open the app. The first time, OSSI offers to add itself to your Desktop
 with its own icon.
 
 If you delete the shortcut, or OSSI moves, you can add it again in **Settings**. A shortcut made by
@@ -67,18 +70,10 @@ due while OSSI wasn't running appears as a missed reminder the next time it star
 
 ### Updating
 
-After you get new code, just open OSSI the usual way. The new code takes over and your data is safe,
-but anything typed in the box and not yet sent is lost.
+In **Settings**, click **Check for updates**, then **Update now**. OSSI restarts on the new version
+and your tasks, notes and settings stay safe. Anything typed in the box and not yet sent is lost.
 
-## Weather and your privacy
-
-Weather is the only everyday feature that uses the internet, and it stays off until you set a
-location or ask about a place. The optional add-ons only use it to download themselves.
-
-It comes from [Open-Meteo](https://open-meteo.com/), a free service with no key or account. OSSI
-sends it the place you typed, then that place's coordinates. If Open-Meteo doesn't recognize a ZIP
-code, OSSI sends the ZIP code to [Zippopotam](https://zippopotam.us/), another free service. These
-services can also see your IP address. Your tasks, notes and reminders are never sent.
+OSSI only checks when you ask. If you got OSSI with git, use `git pull` instead and open it again.
 
 ## Local AI (optional)
 
@@ -132,13 +127,6 @@ Good to know:
 - **Language:** English only for now.
 
 To hear and choose a voice, or to remove the add-on, go to **Settings**.
-
-## Roadmap
-
-1. **Done:** desktop app, tasks, notes, reminders, typos and follow-ups, daily briefing, weather,
-   optional local AI, Settings page, spoken conversations
-2. **Long-term memory:** remember past conversations
-3. **Computer control:** open apps and websites, organize the Downloads folder
 
 ## Development
 

@@ -4,7 +4,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import ttk
 
-from ossi import autostart, desktop, ollama, storage, voice, weather
+from ossi import __version__, autostart, desktop, ollama, storage, updater, voice, weather
 from ossi.drawing import rounded_image
 from ossi.registry import Fetch
 from ossi.skills import ai, briefing, startup
@@ -95,6 +95,7 @@ class SettingsPanel(tk.Frame):
         self.ai_check = 0  # Only the newest check's answer counts.
         self.place_lookup = 0
         self.sample = None  # The voice sample playing right now.
+        self.updating = False
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
@@ -568,6 +569,16 @@ class SettingsPanel(tk.Frame):
             self.desktop_links.grid(row=2, column=0, sticky="w", pady=(4, 0))
 
         frame = tk.Frame(self.body, bg=BG)
+        frame.grid(sticky="ew", padx=SIDE_MARGIN, pady=(0, 10))
+        tk.Label(frame, text=f"Version {__version__}", bg=BG, fg=TEXT, font=FONT).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.update_status = self.note(frame)
+        self.update_status.grid(row=1, column=0, sticky="w")
+        self.update_links = tk.Frame(frame, bg=BG)
+        self.update_links.grid(row=2, column=0, sticky="w", pady=(4, 0))
+
+        frame = tk.Frame(self.body, bg=BG)
         frame.grid(sticky="ew", padx=SIDE_MARGIN, pady=(0, 16))
         tk.Label(frame, text="Found a problem?", bg=BG, fg=TEXT, font=FONT).grid(
             row=0, column=0, sticky="w"
@@ -611,6 +622,67 @@ class SettingsPanel(tk.Frame):
             "<Leave>", lambda event: self.sponsor_button.configure(image=self.sponsor_image)
         )
 
+    def refresh_updates(self):
+        if self.updating:
+            return
+        reason = updater.blocked_reason()
+        self.update_status.configure(text=reason or "Your tasks, notes and settings stay safe.")
+        self.links(self.update_links, [] if reason else [("Check for updates", self.check_updates)])
+
+    def check_updates(self):
+        self.update_status.configure(text="Checking...")
+        self.links(self.update_links, [])
+
+        def finish(db, release, session):
+            if not self.updating:
+                self.show_update_result(release)
+
+        self.app.start_fetch(Fetch("", updater.check, finish))
+
+    def show_update_result(self, release):
+        if release is None:
+            self.update_status.configure(text="I couldn't check. Are you connected to the internet?")
+            self.links(self.update_links, [("Try again", self.check_updates)])
+        elif not release:
+            self.update_status.configure(text="You have the newest version.")
+            self.links(self.update_links, [("Check again", self.check_updates)])
+        else:
+            self.update_status.configure(
+                text=f"Version {release.version} is available. OSSI restarts to finish updating."
+            )
+            self.links(
+                self.update_links,
+                [
+                    ("Update now", lambda: self.install_update(release)),
+                    ("What's new", lambda: webbrowser.open(release.page)),
+                ],
+            )
+
+    def install_update(self, release):
+        self.updating = True
+        self.update_status.configure(text=f"Updating to version {release.version}...")
+        self.links(self.update_links, [])
+
+        def work():
+            try:
+                updater.install(release)
+            except updater.UpdateError as error:
+                return str(error)
+            return True
+
+        def finish(db, result, session):
+            self.updating = False
+            if result is True:
+                self.update_status.configure(text="Updated. Restarting OSSI...")
+                self.app.restart_updated()
+                return
+            self.update_status.configure(
+                text=result or "The update didn't work, so I kept this version."
+            )
+            self.links(self.update_links, [("Try again", lambda: self.install_update(release))])
+
+        self.app.start_fetch(Fetch("", work, finish))
+
     def add_to_desktop(self):
         self.desktop_status.configure(text="Adding it...")
 
@@ -647,6 +719,7 @@ class SettingsPanel(tk.Frame):
         if self.login_switch:
             self.login_switch.set(autostart.is_enabled())
         self.refresh_desktop()
+        self.refresh_updates()
 
     def refresh(self):
         self.refresh_ai()
