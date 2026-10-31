@@ -13,6 +13,9 @@ A personal assistant desktop app that runs on your own computer. No AI key, no a
 - **Tasks:** add tasks by typing, and click a circle to complete one. Undo brings it back.
 - **Notes:** save quick notes and search them later.
 - **Time and date:** ask for either one.
+- **Settings:** change everything from one page in the window.
+- **Local AI (optional):** a model on your own computer can handle what the built-in commands
+  don't understand.
 
 OSSI matches what you type against known phrases and runs the skill that fits, so it only
 understands what it's been taught. It still handles typos, polite wording and follow-ups like
@@ -39,9 +42,7 @@ powershell -ExecutionPolicy Bypass -File scripts\create_shortcut.ps1
 
 ## Using the app
 
-Type in the box at the bottom of the window and press Enter. Click **Settings** at the bottom of
-the sidebar to change the local AI, your location, temperature units, the daily briefing and
-starting at login. Each setting also has a typed command, and both do the same thing.
+Type in the box at the bottom of the window and press Enter.
 
 | Type | What happens |
 | --- | --- |
@@ -53,6 +54,8 @@ starting at login. Each setting also has a typed command, and both do the same t
 | `weather friday`, `weather this week`, `weather this weekend` | Shows other days, up to a week out |
 | `what's the weather in Paris` | Shows the weather somewhere else |
 | `use celsius` or `use fahrenheit` | Chooses how temperatures are shown |
+| `turn on ai` or `turn off ai` | Turns the optional local AI on or off |
+| `ai status` | Says whether the AI is on and Ollama is running |
 | `remind me tomorrow at 3pm to call the bank` | Sets a reminder |
 | `remind me to check the oven in 20 minutes` | Sets a reminder, with the time at the end |
 | `reminders` | Lists upcoming reminders |
@@ -76,6 +79,22 @@ starting at login. Each setting also has a typed command, and both do the same t
   stepping back through earlier tasks.
 - **Copy from the chat:** drag to select text and press Ctrl+C, or right-click a message and
   choose **Copy**.
+
+### Settings
+
+Click **Settings** at the bottom of the sidebar, and **Back to chat** to return.
+
+![The Settings page, with switches for the local AI, daily briefing and starting at login](docs/settings.png)
+
+| Setting | What it does |
+| --- | --- |
+| **Use a local AI model** | Turns the AI on or off and shows its status. If Ollama isn't ready, it says what's missing. |
+| **Location** | Sets the place used for weather. If several places match, click the right one. |
+| **Temperature** | Switches between °F and °C |
+| **Daily briefing** | Turns the automatic briefing on or off |
+| **Start when I log in** | Starts OSSI in the background when you log in |
+
+Each setting also has a typed command, and both do the same thing.
 
 ### Daily briefing
 
@@ -110,9 +129,8 @@ OSSI works fully without AI. To have it handle messages its commands don't under
 [Ollama](https://ollama.com/). There's no key or account, and your messages stay on your computer.
 
 1. Install Ollama, then download a model in a terminal: `ollama pull llama3.2`. That's about 2 GB.
-2. In OSSI, click **Settings** and turn on **Use a local AI model**. It tells you what's missing
-   if Ollama isn't ready, and lets you pick a model if you have several. You can also type
-   `turn on ai`, `turn off ai` and `ai status`.
+2. In OSSI, click **Settings** and turn on **Use a local AI model**. If you have several models,
+   choose one from the list that appears.
 
 OSSI tries its own commands and typo corrections first, so those stay instant. For anything else,
 the model sees your message, the last few messages of the conversation, the time, and your open
@@ -160,9 +178,15 @@ Reminders only fire while OSSI is running, so closing the window hides it instea
 Open OSSI the usual way to bring the window back, and type `exit` to quit completely. There's
 no system tray icon yet.
 
-To keep reminders working across restarts, type `start at login`. Anything that came due while
-OSSI wasn't running appears as a missed reminder the next time it starts. If Windows blocks a
-notification with Do Not Disturb, the reminder still appears in the chat.
+To keep reminders working across restarts, turn on **Start when I log in** in Settings. Anything
+that came due while OSSI wasn't running appears as a missed reminder the next time it starts. If
+Windows blocks a notification with Do Not Disturb, the reminder still appears in the chat.
+
+### Updating OSSI
+
+After you get new code, for example with `git pull`, just open OSSI the usual way. A copy running
+older code closes itself and the new code takes over. Your data is safe, but anything typed in the
+box and not yet sent is lost.
 
 ## Run from a terminal (optional)
 
@@ -179,6 +203,9 @@ ossi                          # open the window
 ossi-gui                      # open the window and free up the terminal
 ossi add task call the bank   # run one command without opening the window
 ```
+
+If a command asks a question, like `Did you mean`, type your answer at the `>` prompt. Press Enter
+on an empty line to skip it.
 
 ## Project layout
 
@@ -199,13 +226,13 @@ src/ossi/
   weather.py    Gets the forecast from Open-Meteo
   ollama.py     Talks to a local AI model
   notifications.py  Windows notifications
-  instance.py   Keeps one copy running and reopens its window
+  instance.py   Keeps one copy running, and replaces it after an update
   autostart.py  Starts OSSI at login
   skills/       One file per skill, loaded automatically
   assets/       The app icons
 scripts/        Generate the Desktop shortcut and the icons
 tests/          Unit tests
-docs/           The screenshot in this README
+docs/           The screenshots in this README
 ```
 
 ## Add a skill
@@ -245,12 +272,14 @@ in `storage.py`. Don't edit an existing entry, because existing databases have a
 python -m unittest discover -s tests
 ```
 
-The window tests open a hidden window, so they need a desktop session.
+The window tests need a desktop session. Most keep their window hidden, but a few show it briefly.
+They use temporary data and never change your login settings. Nothing in the tests uses the
+internet.
 
 ## Roadmap
 
 1. **Done:** desktop app, tasks, notes, time and date, reminders, typos and follow-ups, daily
-   briefing, weather, optional local AI
+   briefing, weather, optional local AI, Settings page
 2. **Computer control:** open apps and websites, organize the Downloads folder
 3. **Voice:** offline speech recognition and text to speech
 
