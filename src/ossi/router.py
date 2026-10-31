@@ -14,19 +14,6 @@ NEVER_MIND = "OK, never mind."
 DISMISS = {"never mind", "nevermind", "forget it", "cancel", "stop"}
 # "cancel" alone means canceling a reminder unless OSSI just asked a question.
 STOP_WAITING = DISMISS - {"cancel"}
-# Commands that only look something up, so mishearing one does no harm.
-SAFE_TO_SAY = {
-    "reminders",
-    "tasks",
-    "ai status",
-    "weather",
-    "briefing",
-    "what time is it",
-    "what's the date",
-    "help",
-    "notes",
-    "find note <word>",
-}
 MOST_REMEMBERED_MESSAGES = 12
 MOST_REMEMBERED_CHARACTERS = 500
 
@@ -144,7 +131,7 @@ def handle_spoken(db, text, session):
     session.turn += 1
     remember(session, "user", text)
 
-    if found and found[0].usage in SAFE_TO_SAY:
+    if found and found[0].usage in ai.LOOKUPS:
         return render(db, run(db, found, session), session)
     if found and found[0].usage is not None:
         return render(db, ai.spoken_confirm(stripped), session)

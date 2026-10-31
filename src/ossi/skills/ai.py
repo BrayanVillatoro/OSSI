@@ -40,6 +40,20 @@ OFF_LIMITS = {
     "turn on the daily briefing",
 }
 
+# Commands that only look something up, so running one by mistake does no harm.
+LOOKUPS = {
+    "reminders",
+    "tasks",
+    "ai status",
+    "weather",
+    "briefing",
+    "what time is it",
+    "what's the date",
+    "help",
+    "notes",
+    "find note <word>",
+}
+
 INSTRUCTIONS = """You are OSSI, a personal assistant running on the user's computer.
 The user said something OSSI's built-in commands didn't understand. Respond with JSON.
 
@@ -131,6 +145,16 @@ def build_instructions(db, now=None):
     )
 
 
+def worth_offering(found, reply):
+    """Whether to offer a command the model suggested, given the answer it wrote alongside it.
+
+    Models often add a lookup like "tasks" to an answer that already has what it would show.
+    """
+    if not found or found[0].usage in OFF_LIMITS:
+        return False
+    return not (reply and found[0].usage in LOOKUPS)
+
+
 def understand(db, text, find_command, session):
     """Hand a message to the model. Returns None when the AI is off.
 
@@ -154,12 +178,14 @@ def understand(db, text, find_command, session):
         if answer is None:
             return f"{intro}{UNAVAILABLE}"
         suggestion = str(answer.get("command") or "").strip()
+        reply = str(answer.get("reply") or "").strip()
         found = find_command(suggestion) if suggestion else None
-        if found and found[0].usage not in OFF_LIMITS:
+        if worth_offering(found, reply):
+            lead = f"{intro}{reply} " if reply else intro
             if session.pending:  # Don't take over a question they're in the middle of answering.
-                return f"{intro}You could type: {suggestion}"
-            return Confirm(suggestion, intro)
-        return f"{intro}{str(answer.get('reply') or '').strip() or NOT_UNDERSTOOD}"
+                return f"{lead}You could type: {suggestion}"
+            return Confirm(suggestion, lead)
+        return f"{intro}{reply or NOT_UNDERSTOOD}"
 
     draft = Draft(lambda: session.canceled_turn >= asked_on)
 
@@ -222,7 +248,7 @@ def converse(db, text, find_command, session):
         words = answer.split("[", 1)[0].strip()
         suggestion = action.group(1).strip() if action else ""
         found = find_command(suggestion) if suggestion else None
-        if found and found[0].usage not in OFF_LIMITS and not session.pending:
+        if worth_offering(found, words) and not session.pending:
             return spoken_confirm(suggestion, f"{words} " if words else "")
         return words or "Sorry, I lost my train of thought."
 

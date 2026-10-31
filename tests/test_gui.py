@@ -20,6 +20,14 @@ class FakeProcess:
         return self.code
 
 
+class StartingSizeTest(unittest.TestCase):
+    def test_a_large_screen_gets_the_full_size(self):
+        self.assertEqual(gui.starting_size(2560, 1440), "1200x800")
+
+    def test_a_small_screen_gets_what_fits(self):
+        self.assertEqual(gui.starting_size(1024, 768), "984x648")
+
+
 class GuiTest(unittest.TestCase):
     def setUp(self):
         self.db = storage.connect(":memory:")

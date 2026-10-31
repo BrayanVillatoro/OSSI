@@ -50,6 +50,10 @@ DESKTOP_FAILED = "I couldn't add OSSI to your Desktop. You can try again in Sett
 SETTINGS_LINK = "⚙  Settings"
 BACK_LINK = "←  Back to chat"
 
+WINDOW_WIDTH = 1200
+WINDOW_HEIGHT = 800
+SCREEN_MARGIN_WIDTH = 40
+SCREEN_MARGIN_HEIGHT = 120  # Room for the title bar and the taskbar.
 BUBBLE_MAX_WIDTH = 420
 BOX_HEIGHT = 48
 TICK_MS = 500
@@ -81,7 +85,7 @@ class App:
         self.write_frame = 0
 
         root.title("OSSI")
-        root.geometry("940x600")
+        root.geometry(starting_size(root.winfo_screenwidth(), root.winfo_screenheight()))
         root.minsize(800, 400)
         root.configure(bg=BG)
         root.columnconfigure(1, weight=1)
@@ -733,6 +737,13 @@ class App:
     def show_error(self, *exc_info):
         # The windowed launcher has no console, so errors would otherwise vanish.
         messagebox.showerror("OSSI", "".join(traceback.format_exception(*exc_info)))
+
+
+def starting_size(screen_width, screen_height):
+    """The window's opening size, smaller if that's what fits on this screen."""
+    width = min(WINDOW_WIDTH, screen_width - SCREEN_MARGIN_WIDTH)
+    height = min(WINDOW_HEIGHT, screen_height - SCREEN_MARGIN_HEIGHT)
+    return f"{width}x{height}"
 
 
 def bubble_text(bubble, item):

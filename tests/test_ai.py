@@ -117,6 +117,23 @@ class SuggestionTest(Base):
         with model_says(reply="Start with the bank."):
             self.assertEqual(self.say("which task matters most"), "Start with the bank.")
 
+    def test_an_answer_is_kept_when_the_model_also_names_a_lookup(self):
+        with model_says("tasks", "You have one task: call the bank"):
+            self.assertEqual(self.say("do I have anything to do"), "You have one task: call the bank")
+        self.assertIsNone(self.session.pending)
+
+    def test_a_lookup_with_no_answer_is_still_offered(self):
+        with model_says("weather"):
+            self.assertEqual(self.say("do I need a coat"), "Did you mean: weather?")
+
+    def test_an_answer_is_kept_when_the_model_also_suggests_a_change(self):
+        with model_says("add task buy eggs", "You could put that on your list."):
+            self.assertEqual(
+                self.say("I keep forgetting eggs"),
+                "You could put that on your list. Did you mean: add task buy eggs?",
+            )
+        self.assertEqual(self.say("yes"), "Added task 1: buy eggs")
+
     def test_odd_answers_do_not_crash(self):
         for answer in ({}, {"command": None, "reply": None}, {"command": 5, "reply": ""}):
             with mock.patch.object(ollama, "chat", return_value=answer):
@@ -595,6 +612,17 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(self.app.session.thinking, 0)
         self.assertIn(router.NEVER_MIND, self.log_text())
         self.assertNotIn("too late", self.log_text())
+
+    def test_an_answer_stays_on_screen_when_the_model_also_names_a_lookup(self):
+        def chat(model, system, message, history, on_text):
+            on_text("You have one task")
+            return {"command": "tasks", "reply": "You have one task: call the bank"}
+
+        self.run_with_model("do I have anything to do", chat)
+        self.pump_until(lambda: not self.app.fetched.empty())
+        self.app.check_fetches()
+        self.assertIn("You have one task: call the bank", self.log_text())
+        self.assertNotIn("Did you mean", self.log_text())
 
     def test_two_replies_can_be_written_at_once(self):
         release = threading.Event()

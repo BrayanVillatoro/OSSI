@@ -55,7 +55,7 @@ You can also click the circle next to a task to complete it, and right-click a m
 ### Settings
 
 Click **Settings** at the bottom of the sidebar to turn on the AI, set your location, switch between
-°F and °C, turn off the daily briefing, start OSSI when you log in, add it to your Desktop, or report a bug.
+°F and °C, turn off the daily briefing, start OSSI when you log in, add it to your Desktop, report a bug, or sponsor OSSI.
 
 ![The Settings page, with switches for the local AI, daily briefing and starting at login](docs/settings.png)
 

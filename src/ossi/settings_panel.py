@@ -27,6 +27,8 @@ from ossi.theme import (
 
 OLLAMA_SITE = "https://ollama.com/"
 BUG_REPORT_PAGE = "https://github.com/BrayanVillatoro/OSSI/issues/new"
+SPONSOR_PAGE = "https://github.com/sponsors/BrayanVillatoro"
+SPONSOR_PINK = "#DB61A2"
 PULL_COMMAND = f"ollama pull {ollama.RECOMMENDED_MODEL}"
 PASTE_STEP = "Open Command Prompt (search for cmd in the Start menu), press Ctrl+V, then Enter."
 FINISH_STEP = "The download is about 2 GB. When it says success, click Try again."
@@ -491,14 +493,14 @@ class SettingsPanel(tk.Frame):
             self.voice_status.configure(text=f"I couldn't play {name}. See {voice.log_path()}.")
             return
         self.voice_status.configure(text=f"Playing {name}...")
-        self.after(SAMPLE_CHECK_MS, self.check_sample, self.sample, name)
+        self.sample_timer = self.after(SAMPLE_CHECK_MS, self.check_sample, self.sample, name)
 
     def check_sample(self, process, name):
         if process is not self.sample:
             return  # Another sample replaced it.
         code = process.poll()
         if code is None:
-            self.after(SAMPLE_CHECK_MS, self.check_sample, process, name)
+            self.sample_timer = self.after(SAMPLE_CHECK_MS, self.check_sample, process, name)
             return
         self.sample = None
         if code:
@@ -510,6 +512,7 @@ class SettingsPanel(tk.Frame):
         if self.sample:
             process, self.sample = self.sample, None
             process.kill()
+            self.after_cancel(self.sample_timer)
 
     def remove_voice(self):
         self.stop_sample()
@@ -575,6 +578,38 @@ class SettingsPanel(tk.Frame):
         self.report_links = tk.Frame(frame, bg=BG)
         self.report_links.grid(row=2, column=0, sticky="w", pady=(4, 0))
         self.links(self.report_links, [("Report a bug", lambda: webbrowser.open(BUG_REPORT_PAGE))])
+
+        frame = tk.Frame(self.body, bg=BG)
+        frame.grid(sticky="ew", padx=SIDE_MARGIN, pady=(0, 16))
+        tk.Label(frame, text="Like OSSI?", bg=BG, fg=TEXT, font=FONT).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.note(frame, "Support its development on GitHub. It's completely optional.").grid(
+            row=1, column=0, sticky="w", pady=(0, 6)
+        )
+        self.sponsor_image = rounded_image(114, 32, 6, SURFACE, BG, BORDER)
+        self.sponsor_hover_image = rounded_image(114, 32, 6, BORDER, BG, BORDER)
+        self.sponsor_button = tk.Label(
+            frame,
+            text="♥  Sponsor",
+            image=self.sponsor_image,
+            compound="center",
+            bg=BG,
+            fg=SPONSOR_PINK,
+            font=(FAMILY, 10, "bold"),
+            cursor="hand2",
+            borderwidth=0,
+            padx=0,
+            pady=0,
+        )
+        self.sponsor_button.grid(row=2, column=0, sticky="w", padx=(LABEL_INSET, 0))
+        self.sponsor_button.bind("<Button-1>", lambda event: webbrowser.open(SPONSOR_PAGE))
+        self.sponsor_button.bind(
+            "<Enter>", lambda event: self.sponsor_button.configure(image=self.sponsor_hover_image)
+        )
+        self.sponsor_button.bind(
+            "<Leave>", lambda event: self.sponsor_button.configure(image=self.sponsor_image)
+        )
 
     def add_to_desktop(self):
         self.desktop_status.configure(text="Adding it...")

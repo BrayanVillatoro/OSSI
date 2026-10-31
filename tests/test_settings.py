@@ -375,6 +375,13 @@ class GeneralTest(PanelTest):
             self.root.update()
         browser.assert_called_once_with("https://github.com/BrayanVillatoro/OSSI/issues/new")
 
+    def test_sponsor_opens_the_sponsors_page(self):
+        with mock.patch("webbrowser.open") as browser:
+            self.root.update()
+            self.panel.sponsor_button.event_generate("<Button-1>")
+            self.root.update()
+        browser.assert_called_once_with("https://github.com/sponsors/BrayanVillatoro")
+
     def test_space_flips_a_switch(self):
         self.root.deiconify()  # Key presses only reach a visible window that has the focus.
         self.root.update()

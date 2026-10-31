@@ -159,6 +159,11 @@ class SpokenTest(unittest.TestCase):
             self.assertEqual(self.say("I need eggs"), "Sure thing. Should I add task buy eggs?")
         self.assertEqual(self.say("yeah"), "Added task 1: buy eggs")
 
+    def test_a_lookup_does_not_interrupt_an_answer(self):
+        with self.model_says("You've got one task. [DO: tasks]"):
+            self.assertEqual(self.say("what do I have going on"), "You've got one task.")
+        self.assertIsNone(self.session.pending)
+
     def test_a_suggestion_ossi_cannot_do_is_never_offered(self):
         with self.model_says("Done! [DO: delete everything]"):
             self.assertEqual(self.say("wipe it all"), "Done!")
@@ -232,6 +237,7 @@ class WindowTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
         FakeProcess.created = []
         self.app = gui.App(self.root, self.db, notify=lambda title, body: None)
+        self.addCleanup(self.app.settings.stop_sample)
         self.talk = self.app.talk
         storage.set_setting(self.db, "ai_model", "llama3.2:latest")
 
@@ -481,6 +487,11 @@ class WindowTest(unittest.TestCase):
     def voice_text(self):
         return self.app.settings.voice_status.cget("text")
 
+    def check_sample_now(self, process, name):
+        """Do the check that was waiting on a timer, instead of leaving it to fire later."""
+        self.app.settings.after_cancel(self.app.settings.sample_timer)
+        self.app.settings.check_sample(process, name)
+
     def test_choosing_a_voice_plays_a_sample(self):
         self.installed()
         self.app.toggle_settings()
@@ -490,7 +501,7 @@ class WindowTest(unittest.TestCase):
         play.assert_called_once_with("George")
         self.assertEqual(self.voice_text(), "Playing George...")
         process.poll.return_value = 0
-        self.app.settings.check_sample(process, "George")
+        self.check_sample_now(process, "George")
         self.assertIn("installed", self.voice_text())
 
     def test_no_sample_before_the_add_on_is_installed(self):
@@ -520,7 +531,7 @@ class WindowTest(unittest.TestCase):
         patcher, process = self.sample_of(code=1)
         with patcher:
             self.choose("George")
-        self.app.settings.check_sample(process, "George")
+        self.check_sample_now(process, "George")
         self.assertIn("couldn't play George", self.voice_text())
 
     def test_a_sample_that_cannot_start_says_so(self):
