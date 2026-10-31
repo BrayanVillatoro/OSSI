@@ -78,7 +78,7 @@ class GlowTest(unittest.TestCase):
         self.assertGreater(len(values), 5)
 
     def test_strength_stays_in_range_at_full_volume(self):
-        for state in glow.COLORS:
+        for state in glow.colors():
             for now in range(50):
                 self.assertLessEqual(glow.target_strength(state, 1.0, now), 1.02)
 
@@ -103,7 +103,7 @@ class GlowTest(unittest.TestCase):
 
     def test_every_state_has_a_color(self):
         for state in (glow.WAITING, glow.LISTENING, glow.HEARING, glow.THINKING, glow.SPEAKING, glow.MUTED_STATE):
-            self.assertIn(state, glow.COLORS)
+            self.assertIn(state, glow.colors())
 
 
 class EchoTest(unittest.TestCase):

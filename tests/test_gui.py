@@ -20,6 +20,66 @@ class FakeProcess:
         return self.code
 
 
+class QuitTest(unittest.TestCase):
+    def setUp(self):
+        self.db = storage.connect(":memory:")
+        self.addCleanup(self.db.close)
+        try:
+            self.root = tk.Tk()
+        except tk.TclError as error:
+            self.skipTest(f"no display: {error}")
+        self.addCleanup(self.close_window)
+        self.root.withdraw()
+        self.app = gui.App(self.root, self.db, notify=lambda title, body: None)
+
+    def close_window(self):
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def is_open(self):
+        try:
+            return bool(self.root.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def click_quit(self, answer):
+        self.root.deiconify()  # Clicks only reach a window that's been drawn.
+        self.root.update()
+        with mock.patch("ossi.gui.messagebox.askyesno", return_value=answer) as asked:
+            self.app.quit_label.event_generate("<Button-1>")
+            if self.is_open():
+                self.root.update()
+        asked.assert_called_once()
+
+    def test_the_link_is_in_the_sidebar(self):
+        self.assertIn("Quit OSSI", self.app.quit_label.cget("text"))
+        self.assertIs(self.app.quit_label.master, self.app.settings_label.master)
+
+    def test_yes_stops_ossi(self):
+        self.click_quit(True)
+        self.assertFalse(self.is_open())
+
+    def test_no_keeps_it_running(self):
+        self.click_quit(False)
+        self.assertTrue(self.is_open())
+
+    def test_quitting_ends_a_conversation_and_a_voice_sample(self):
+        with mock.patch.object(self.app.talk, "end") as end, mock.patch.object(
+            self.app.settings, "stop_sample"
+        ) as stop_sample:
+            self.app.quit()
+        end.assert_called_once()
+        stop_sample.assert_called_once()
+
+    def test_typing_exit_does_the_same(self):
+        self.app.entry.insert(0, "exit")
+        with mock.patch.object(self.app, "quit") as quit_ossi:
+            self.app.send()
+        quit_ossi.assert_called_once()
+
+
 class StartingSizeTest(unittest.TestCase):
     def test_a_large_screen_gets_the_full_size(self):
         self.assertEqual(gui.starting_size(2560, 1440), "1200x800")

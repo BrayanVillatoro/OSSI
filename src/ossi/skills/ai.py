@@ -38,6 +38,8 @@ OFF_LIMITS = {
     "turn off ai",
     "turn off the daily briefing",
     "turn on the daily briefing",
+    "watch my network",
+    "stop watching my network",
 }
 
 # Commands that only look something up, so running one by mistake does no harm.
@@ -52,6 +54,8 @@ LOOKUPS = {
     "help",
     "notes",
     "find note <word>",
+    "network status",
+    "network devices",
 }
 
 INSTRUCTIONS = """You are OSSI, a personal assistant running on the user's computer.

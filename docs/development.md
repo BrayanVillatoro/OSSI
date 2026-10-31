@@ -72,6 +72,7 @@ src/ossi/
   storage.py    SQLite connection and database upgrades
   when.py       Understands times like "tomorrow at 3pm"
   weather.py    Gets the forecast from Open-Meteo
+  network.py    Checks the connection and what's on the home network
   ollama.py     Talks to a local AI model
   talk.py       Runs a spoken conversation in the window
   glow.py       The animated glow shown during a conversation

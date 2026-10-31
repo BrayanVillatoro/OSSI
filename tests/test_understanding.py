@@ -36,7 +36,7 @@ class TypoTest(Conversation):
             ("shw my tasks", "show my tasks"),
             ("add taks call the bank", "add task call the bank"),
             ("remnd me tomorrow at 3pm to call", "remind me tomorrow at 3pm to call"),
-            ("dont start at login", "don't start at login"),
+            ("dont strat at login", "don't start at login"),
         ]:
             self.assertEqual(self.say(typed), f"Did you mean: {meant}?", typed)
             self.session.pending = None

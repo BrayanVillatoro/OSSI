@@ -4,7 +4,8 @@ import math
 import time
 import tkinter as tk
 
-from ossi.theme import ACCENT, BG, MUTED
+from ossi import theme
+from ossi.theme import BG, MUTED
 
 SIZE = 96
 FRAME_MS = 33  # About 30 frames a second.
@@ -21,14 +22,17 @@ THINKING = "thinking"
 SPEAKING = "speaking"
 MUTED_STATE = "muted"
 
-COLORS = {
-    WAITING: MUTED,
-    LISTENING: ACCENT,
-    HEARING: "#7DF0CE",
-    THINKING: "#8F9BFF",
-    SPEAKING: "#5FD4F4",
-    MUTED_STATE: "#4A4F5C",
-}
+
+
+def colors():
+    return {
+        WAITING: MUTED,
+        LISTENING: theme.ACCENT,
+        HEARING: theme.ACCENT_HOVER,
+        THINKING: "#8F9BFF",
+        SPEAKING: "#5FD4F4",
+        MUTED_STATE: "#4A4F5C",
+    }
 
 
 def target_strength(state, level, now):
@@ -124,5 +128,5 @@ class GlowOrb(tk.Canvas):
         # Nothing to draw while Settings covers it or the window is closed.
         if self.winfo_viewable():
             step = round(min(max(self.strength, 0), 1) * (STEPS - 1))
-            self.itemconfigure(self.item, image=self.frame(COLORS[self.state_name], step))
+            self.itemconfigure(self.item, image=self.frame(colors()[self.state_name], step))
         self.timer = self.after(FRAME_MS, self.animate)

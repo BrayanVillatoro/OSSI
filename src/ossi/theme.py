@@ -1,6 +1,8 @@
 """The window's colors and fonts, and the styling for its ttk widgets."""
 
-from tkinter import ttk
+from tkinter import TclError, ttk
+
+from ossi.drawing import blend
 
 BG = "#15171C"
 SIDEBAR = "#1C1F26"
@@ -8,15 +10,50 @@ SURFACE = "#262A33"
 BORDER = "#343944"
 TEXT = "#E8EAEE"
 MUTED = "#8D93A0"
-ACCENT = "#4CC9A4"
-ACCENT_HOVER = "#6ED8B9"
-ON_ACCENT = "#0E1A16"
+# Bright enough to read on the dark background, and for dark text to read on them.
+ACCENTS = {
+    "Mint": "#4CC9A4",
+    "Blue": "#5B9DF9",
+    "Violet": "#A78BFA",
+    "Pink": "#F472B6",
+    "Red": "#F87171",
+    "Orange": "#FB923C",
+    "Yellow": "#FACC15",
+}
+DEFAULT_ACCENT = "Mint"
+ACCENT = ""
+ACCENT_HOVER = ""
+ON_ACCENT = ""
 
 FAMILY = "Segoe UI"
 FONT = (FAMILY, 11)
 SMALL = (FAMILY, 10)
 SMALL_BOLD = (FAMILY, 9, "bold")
 SIDEBAR_SCROLLBAR = "Sidebar.Vertical.TScrollbar"
+
+
+def use_accent(name):
+    """Choose the accent color. Anything already drawn in the old one needs redrawing."""
+    global ACCENT, ACCENT_HOVER, ON_ACCENT
+    ACCENT = ACCENTS.get(name, ACCENTS[DEFAULT_ACCENT])
+    ACCENT_HOVER = blend(ACCENT, "#FFFFFF", 0.25)
+    ON_ACCENT = blend(ACCENT, "#000000", 0.85)
+
+
+use_accent(DEFAULT_ACCENT)
+
+
+def recolor(widget, changes):
+    """Swap colors on a widget and everything inside it. `changes` maps old colors to new."""
+    for option in ("fg", "bg", "highlightcolor", "highlightbackground"):
+        try:
+            color = str(widget.cget(option))
+        except TclError:  # This kind of widget doesn't have that option.
+            continue
+        if color in changes:
+            widget.configure(**{option: changes[color]})
+    for child in widget.winfo_children():
+        recolor(child, changes)
 
 
 def style_widgets(root):

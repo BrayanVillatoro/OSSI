@@ -4,20 +4,18 @@ import tkinter as tk
 import webbrowser
 from tkinter import ttk
 
-from ossi import __version__, autostart, desktop, ollama, storage, updater, voice, weather
+from ossi import __version__, autostart, desktop, ollama, storage, theme, updater, voice, weather
 from ossi.drawing import rounded_image
 from ossi.registry import Fetch
 from ossi.skills import ai, briefing, startup
+from ossi.skills import network as network_skill
 from ossi.skills import weather as weather_skill
 from ossi.theme import (
-    ACCENT,
-    ACCENT_HOVER,
     BG,
     BORDER,
     FAMILY,
     FONT,
     MUTED,
-    ON_ACCENT,
     SMALL,
     SMALL_BOLD,
     SURFACE,
@@ -39,6 +37,7 @@ SIDE_MARGIN = 28
 RIGHT_SPACE = 90  # Room beside wrapped text for the switch.
 LABEL_INSET = 3  # Lines a box up with label text, which Tk indents slightly.
 SAMPLE_CHECK_MS = 200
+ACCENT_CHOICE = 28
 
 
 class Switch(tk.Canvas):
@@ -52,7 +51,7 @@ class Switch(tk.Canvas):
             bg=BG,
             highlightthickness=1,
             highlightbackground=BG,
-            highlightcolor=ACCENT,
+            highlightcolor=theme.ACCENT,
             borderwidth=0,
             takefocus=1,
             cursor="hand2",
@@ -60,16 +59,20 @@ class Switch(tk.Canvas):
         self.command = command
         self.on = False
         self.images = {}
-        for state, track, knob in ((True, ACCENT, ON_ACCENT), (False, BORDER, TEXT)):
-            self.images[state] = (
-                rounded_image(SWITCH_WIDTH, SWITCH_HEIGHT, SWITCH_HEIGHT // 2, track, BG),
-                rounded_image(KNOB, KNOB, KNOB // 2, knob, track),
-            )
         self.track = self.create_image(1, 1, anchor="nw")
         self.knob = self.create_image(0, 0, anchor="nw")
         self.bind("<Button-1>", lambda event: self.flip())
         self.bind("<space>", lambda event: self.flip())
-        self.set(False)
+        self.restyle()
+
+    def restyle(self):
+        """Draw the switch in the current accent color."""
+        for state, track, knob in ((True, theme.ACCENT, theme.ON_ACCENT), (False, BORDER, TEXT)):
+            self.images[state] = (
+                rounded_image(SWITCH_WIDTH, SWITCH_HEIGHT, SWITCH_HEIGHT // 2, track, BG),
+                rounded_image(KNOB, KNOB, KNOB // 2, knob, track),
+            )
+        self.set(self.on)
 
     def set(self, on):
         self.on = bool(on)
@@ -96,6 +99,8 @@ class SettingsPanel(tk.Frame):
         self.place_lookup = 0
         self.sample = None  # The voice sample playing right now.
         self.updating = False
+        self.switches = []
+        self.accent_images = {}
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
@@ -118,7 +123,9 @@ class SettingsPanel(tk.Frame):
 
         self.build_ai()
         self.build_talk()
+        self.build_network()
         self.build_weather()
+        self.build_appearance()
         self.build_general()
         # Hidden only now: earlier, the next section would have been given their rows.
         self.ai_links.grid_remove()
@@ -164,6 +171,7 @@ class SettingsPanel(tk.Frame):
         description_label = self.note(row, description)
         description_label.grid(row=1, column=0, sticky="w")
         switch = Switch(row, command)
+        self.switches.append(switch)
         switch.grid(row=0, column=1, rowspan=2, sticky="e", padx=(16, 0))
         return switch, description_label
 
@@ -179,11 +187,11 @@ class SettingsPanel(tk.Frame):
         if items:
             frame.grid()
         for column, (text, function) in enumerate(items):
-            link = tk.Label(frame, text=text, bg=BG, fg=ACCENT, font=SMALL, cursor="hand2")
+            link = tk.Label(frame, text=text, bg=BG, fg=theme.ACCENT, font=SMALL, cursor="hand2")
             link.grid(row=0, column=column, padx=(0, 16), sticky="w")
             link.bind("<Button-1>", lambda event, run=function: run())
-            link.bind("<Enter>", lambda event, w=link: w.configure(fg=ACCENT_HOVER))
-            link.bind("<Leave>", lambda event, w=link: w.configure(fg=ACCENT))
+            link.bind("<Enter>", lambda event, w=link: w.configure(fg=theme.ACCENT_HOVER))
+            link.bind("<Leave>", lambda event, w=link: w.configure(fg=theme.ACCENT))
             self.use_wheel_on(link)
 
     # Local AI
@@ -350,19 +358,19 @@ class SettingsPanel(tk.Frame):
         self.place_entry.grid(row=0, column=0, padx=8, pady=6)
         self.place_entry.bind("<Return>", lambda event: self.save_place())
         self.place_entry.bind(
-            "<FocusIn>", lambda event: entry_border.configure(highlightbackground=ACCENT)
+            "<FocusIn>", lambda event: entry_border.configure(highlightbackground=theme.ACCENT)
         )
         self.place_entry.bind(
             "<FocusOut>", lambda event: entry_border.configure(highlightbackground=BORDER)
         )
-        self.save_image = rounded_image(68, 30, 8, ACCENT, BG)
+        self.save_image = rounded_image(68, 30, 8, theme.ACCENT, BG)
         self.save_button = tk.Label(
             entry_row,
             text="Save",
             image=self.save_image,
             compound="center",
             bg=BG,
-            fg=ON_ACCENT,
+            fg=theme.ON_ACCENT,
             font=(FAMILY, 10, "bold"),
             cursor="hand2",
         )
@@ -405,7 +413,7 @@ class SettingsPanel(tk.Frame):
         current = self.current_unit()
         for unit, button in self.unit_buttons.items():
             selected = unit == current
-            button.configure(bg=ACCENT if selected else SURFACE, fg=ON_ACCENT if selected else TEXT)
+            button.configure(bg=theme.ACCENT if selected else SURFACE, fg=theme.ON_ACCENT if selected else TEXT)
 
     def say_about_place(self, text):
         self.place_message.configure(text=text)
@@ -458,6 +466,20 @@ class SettingsPanel(tk.Frame):
     def choose_unit(self, unit):
         weather_skill.set_unit(self.db, unit)
         self.refresh_weather()
+
+    # Network
+
+    def build_network(self):
+        self.heading("NETWORK")
+        self.network_switch, _ = self.switch_row(
+            "Watch my network",
+            "Checks your connection every minute and tells you about outages, slowdowns and new "
+            "devices. It pings public servers from Cloudflare and Google to test your internet.",
+            self.toggle_network,
+        )
+
+    def toggle_network(self, on):
+        (network_skill.start_watching if on else network_skill.stop_watching)(self.db)
 
     # Talking
 
@@ -543,6 +565,50 @@ class SettingsPanel(tk.Frame):
                 "the voice add-on, about 600 MB, the first time. You can hear the voices after that."
             )
             self.links(self.voice_links, [])
+
+    # Appearance
+
+    def build_appearance(self):
+        self.heading("APPEARANCE")
+        frame = tk.Frame(self.body, bg=BG)
+        frame.grid(sticky="ew", padx=SIDE_MARGIN)
+        title = tk.Frame(frame, bg=BG)
+        title.grid(row=0, column=0, sticky="w")
+        tk.Label(title, text="Accent color", bg=BG, fg=TEXT, font=FONT).grid(row=0, column=0)
+        self.accent_name = tk.Label(title, bg=BG, fg=MUTED, font=SMALL)
+        self.accent_name.grid(row=0, column=1, padx=(10, 0))
+        choices = tk.Frame(frame, bg=BG)
+        choices.grid(row=1, column=0, sticky="w", pady=(6, 2))
+        self.accent_buttons = {}
+        for column, name in enumerate(theme.ACCENTS):
+            button = tk.Label(choices, bg=BG, cursor="hand2", borderwidth=0)
+            button.grid(row=0, column=column, padx=(LABEL_INSET, 8))
+            button.bind("<Button-1>", lambda event, chosen=name: self.app.set_accent(chosen))
+            self.accent_buttons[name] = button
+
+    def accent_image(self, name, chosen):
+        key = (name, chosen)
+        if key not in self.accent_images:
+            color = theme.ACCENTS[name]
+            self.accent_images[key] = rounded_image(
+                ACCENT_CHOICE, ACCENT_CHOICE, ACCENT_CHOICE // 2, color, BG, TEXT if chosen else None
+            )
+        return self.accent_images[key]
+
+    def refresh_appearance(self):
+        saved = storage.get_setting(self.db, "accent_color")
+        current = saved if saved in theme.ACCENTS else theme.DEFAULT_ACCENT
+        self.accent_name.configure(text=current)
+        for name, button in self.accent_buttons.items():
+            button.configure(image=self.accent_image(name, name == current))
+
+    def restyle(self):
+        """Redraw the parts of this page that are pictures, in the current accent color."""
+        for switch in self.switches:
+            switch.restyle()
+        self.save_image = rounded_image(68, 30, 8, theme.ACCENT, BG)
+        self.save_button.configure(image=self.save_image)
+        self.refresh_appearance()
 
     # General
 
@@ -728,5 +794,7 @@ class SettingsPanel(tk.Frame):
     def refresh(self):
         self.refresh_ai()
         self.refresh_talk()
+        self.network_switch.set(network_skill.is_watching(self.db))
         self.refresh_weather()
+        self.refresh_appearance()
         self.refresh_general()

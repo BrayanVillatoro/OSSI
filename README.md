@@ -10,6 +10,8 @@ A personal assistant desktop app that runs on your own computer. No AI key, no a
 - **Weather:** ask about any day in the next week, here or anywhere else.
 - **Reminders:** get a Windows notification at the time you ask for.
 - **Tasks and notes:** add them by typing, and search your notes later.
+- **Network (optional):** check your connection, see what's on your network, and get told about
+  outages and new devices.
 - **Local AI (optional):** a model on your own computer handles what the commands don't understand.
 - **Talking (optional):** have a spoken conversation, entirely on your own computer.
 
@@ -17,7 +19,8 @@ OSSI only understands what it's been taught, but it copes with typos, polite wor
 like `finish it`.
 
 Your data stays in a local file, `~/.ossi/ossi.db`, outside this repo. OSSI only uses the internet
-for weather, downloading the optional add-ons, and checking for updates when you ask. Your tasks,
+for weather, testing your connection, downloading the optional add-ons, and checking for updates
+when you ask. Your tasks,
 notes and reminders are never sent.
 
 ## Get started
@@ -45,6 +48,8 @@ Type in the box at the bottom of the window and press Enter. Type `help` to see 
 | `remind me tomorrow at 3pm to call the bank` | Sets a reminder |
 | `reminders` | Lists upcoming reminders |
 | `cancel reminder 2` | Cancels a reminder |
+| `is my internet working` | Checks your connection |
+| `what's on my network` | Lists the devices on your network |
 | `add task call the bank` | Adds a task |
 | `tasks` | Lists open tasks |
 | `done 1` or `finish buy milk` | Completes a task, by number or name |
@@ -58,13 +63,22 @@ You can also click the circle next to a task to complete it, and right-click a m
 ### Settings
 
 Click **Settings** at the bottom of the sidebar to turn on the AI, set your location, switch between
-°F and °C, turn off the daily briefing, start OSSI when you log in, add it to your Desktop, report a bug, or sponsor OSSI.
+°F and °C, turn off the daily briefing, change the accent color, start OSSI when you log in, add it to your Desktop, report a bug, or sponsor
+OSSI.
 
 ![The Settings page, with switches for the local AI, daily briefing and starting at login](docs/settings.png)
+
+### Network
+
+Turn on **Watch my network** in **Settings** and OSSI checks your connection every minute while it's
+running. It tells you about outages, slowdowns and new devices. It can only watch, not change
+your router's settings, but **Open Google Home** in the sidebar takes you to where you can. Phones can use changing addresses, so one phone may show up as new more than
+once.
 
 ### Reminders
 
 Reminders only fire while OSSI is running, so closing the window hides it instead of quitting. To
+stop it completely, click **Quit OSSI** at the bottom of the sidebar or type `exit`. To
 keep them working after a restart, turn on **Start when I log in** in Settings. Anything that came
 due while OSSI wasn't running appears as a missed reminder the next time it starts.
 

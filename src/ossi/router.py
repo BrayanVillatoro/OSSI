@@ -24,6 +24,20 @@ LEADING_FILLER = re.compile(
     re.IGNORECASE,
 )
 TRAILING_FILLER = re.compile(r"[, ]+(?:please|thanks|thank you)$", re.IGNORECASE)
+APOSTROPHES = {
+    "whats": "what's",
+    "hows": "how's",
+    "whos": "who's",
+    "wheres": "where's",
+    "thats": "that's",
+    "dont": "don't",
+    "doesnt": "doesn't",
+    "isnt": "isn't",
+    "arent": "aren't",
+    "cant": "can't",
+    "wont": "won't",
+}
+MISSING_APOSTROPHE = re.compile(rf"\b(?:{'|'.join(APOSTROPHES)})\b", re.IGNORECASE)
 
 
 @dataclass
@@ -63,6 +77,20 @@ def find_command(text):
             if match:
                 return cmd, match.groupdict()
     return None
+
+
+def with_apostrophes(text):
+    """Put back the apostrophes people skip when typing, like "whats" or "dont"."""
+    return MISSING_APOSTROPHE.sub(lambda match: APOSTROPHES[match.group().lower()], text)
+
+
+def find_loosely(text):
+    """Find a command, allowing for filler words and skipped apostrophes.
+
+    The exact wording is tried first, so that text being saved, like a note, stays as typed.
+    """
+    stripped = strip_filler(text)
+    return find_command(text) or find_command(stripped) or find_command(with_apostrophes(stripped))
 
 
 def run(db, found, session):
@@ -115,7 +143,7 @@ def handle_spoken(db, text, session):
     """
     text = clean(text)
     stripped = strip_filler(text)
-    found = find_command(text) or find_command(stripped)
+    found = find_loosely(text)
     pending = session.pending
     # People say more than the bare word out loud, like "Yes, please do".
     if isinstance(pending, Confirm) and first_word(text) in YES:
@@ -137,8 +165,7 @@ def handle_spoken(db, text, session):
         return render(db, ai.spoken_confirm(stripped), session)
 
     def find_suggested(command):
-        command = clean(command)
-        return find_command(command) or find_command(strip_filler(command))
+        return find_loosely(clean(command))
 
     result = ai.converse(db, text, find_suggested, session)
     return render(db, FALLBACK if result is None else result, session)
@@ -158,7 +185,7 @@ def handle(db, text, session=None):
         return render(db, NEVER_MIND, session)
 
     stripped = strip_filler(text)
-    found = find_command(text) or find_command(stripped)
+    found = find_loosely(text)
     if found:
         return render(db, run(db, found, session), session)
 
@@ -167,13 +194,14 @@ def handle(db, text, session=None):
         if result is not None:
             return render(db, result, session)
 
-    suggestion = fuzzy.suggest(stripped or text, lambda c: find_command(c) is not None)
+    suggestion = fuzzy.suggest(
+        with_apostrophes(stripped or text), lambda c: find_command(c) is not None
+    )
     if suggestion:
         return render(db, Confirm(suggestion), session)
 
     def find_suggested(command):
-        command = clean(command)
-        return find_command(command) or find_command(strip_filler(command))
+        return find_loosely(clean(command))
 
     result = ai.understand(db, text, find_suggested, session)
     return render(db, FALLBACK if result is None else result, session)

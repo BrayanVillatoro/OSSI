@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ossi import autostart, gui, ollama, router, storage, weather
+from ossi import autostart, gui, ollama, router, storage, theme, weather
 from ossi.settings_panel import PULL_COMMAND
 from ossi.skills import briefing, startup
 
@@ -336,14 +336,14 @@ class WeatherTest(PanelTest):
 
     def test_units_highlight_what_applies(self):
         fahrenheit, celsius = self.panel.unit_buttons["fahrenheit"], self.panel.unit_buttons["celsius"]
-        self.assertEqual(fahrenheit.cget("bg"), gui.ACCENT)
+        self.assertEqual(fahrenheit.cget("bg"), theme.ACCENT)
         storage.set_setting(self.db, "location", json.dumps(PARIS))
         self.panel.refresh()
-        self.assertEqual(celsius.cget("bg"), gui.ACCENT)
+        self.assertEqual(celsius.cget("bg"), theme.ACCENT)
         self.panel.choose_unit("fahrenheit")
         self.assertEqual(self.setting("temperature_unit"), "fahrenheit")
-        self.assertEqual(fahrenheit.cget("bg"), gui.ACCENT)
-        self.assertNotEqual(celsius.cget("bg"), gui.ACCENT)
+        self.assertEqual(fahrenheit.cget("bg"), theme.ACCENT)
+        self.assertNotEqual(celsius.cget("bg"), theme.ACCENT)
 
 
 class GeneralTest(PanelTest):
@@ -402,7 +402,7 @@ class AgreesWithTypedCommandsTest(PanelTest):
         storage.set_setting(self.db, "location", json.dumps(BOSTON))
         self.app.toggle_settings()
 
-        self.assertEqual(self.panel.unit_buttons["celsius"].cget("bg"), gui.ACCENT)
+        self.assertEqual(self.panel.unit_buttons["celsius"].cget("bg"), theme.ACCENT)
         self.assertFalse(self.panel.briefing_switch.on)
         self.assertTrue(self.panel.login_switch.on)
         self.assertIn("Boston", self.panel.location_label.cget("text"))

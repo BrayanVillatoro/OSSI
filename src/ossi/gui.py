@@ -8,28 +8,38 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
 
-from ossi import autostart, desktop, instance, notifications, ollama, router, storage, updater
+from ossi import (
+    autostart,
+    desktop,
+    instance,
+    network,
+    notifications,
+    ollama,
+    router,
+    storage,
+    theme,
+    updater,
+)
 from ossi.drawing import rounded_image
 from ossi.glow import GlowOrb
 from ossi.registry import Fetch
 from ossi.settings_panel import SettingsPanel
 from ossi.skills import briefing
+from ossi.skills import network as network_skill
 from ossi.skills.reminders import fire_due, upcoming
 from ossi.skills.tasks import last_completed, open_tasks
 from ossi.talk import Talk
 from ossi.theme import (
-    ACCENT,
-    ACCENT_HOVER,
     BG,
     BORDER,
     FAMILY,
     FONT,
     MUTED,
-    ON_ACCENT,
     SIDEBAR,
     SIDEBAR_SCROLLBAR,
     SMALL_BOLD,
@@ -48,6 +58,10 @@ DESKTOP_LATER = "OK. You can add it to your Desktop any time in Settings."
 DESKTOP_ADDED = "I added OSSI to your Desktop."
 DESKTOP_FAILED = "I couldn't add OSSI to your Desktop. You can try again in Settings."
 
+GOOGLE_HOME_LINK = "⌂  Open Google Home"
+GOOGLE_HOME_PAGE = "https://home.google.com/"
+QUIT_LINK = "✕  Quit OSSI"
+CONFIRM_QUIT = "Quit OSSI completely?\n\nReminders and network alerts stop until you open it again."
 SETTINGS_LINK = "⚙  Settings"
 BACK_LINK = "←  Back to chat"
 
@@ -61,6 +75,8 @@ TICK_MS = 500
 WRITE_MS = 100  # How often a reply being written updates.
 FRAMES_PER_DOT = 4
 MISSED_AFTER_SECONDS = 60
+NETWORK_CHECK_SECONDS = 60
+DEVICE_SCAN_SECONDS = 15 * 60
 AT_BOTTOM = 0.999  # How far down the chat counts as being at the end, from 0 to 1.
 
 # Tcl crashes if its interpreter is freed off the main thread, and a weather lookup could
@@ -84,6 +100,10 @@ class App:
         self.writing = {}  # The drafts on show, and the number of each one's reply.
         self.write_timer = None
         self.write_frame = 0
+        self.network_watch = network_skill.Watch()
+        self.network_checking = False
+        self.next_network_check = 0.0
+        self.next_device_scan = 0.0
 
         root.title("OSSI")
         root.geometry(starting_size(root.winfo_screenwidth(), root.winfo_screenheight()))
@@ -96,6 +116,7 @@ class App:
         if sys.platform == "win32":
             root.iconbitmap(default=str(ICON))
         use_dark_title_bar(root)
+        theme.use_accent(storage.get_setting(db, "accent_color"))
         style_widgets(root)
         self.menu = tk.Menu(
             root, tearoff=0, bg=SURFACE, fg=TEXT, activebackground=BORDER, activeforeground=TEXT
@@ -150,27 +171,82 @@ class App:
         self.agenda.tag_configure("empty", foreground=MUTED, spacing1=6, lmargin1=2, lmargin2=2)
         self.agenda.tag_configure("reminder", spacing1=6, lmargin1=2, lmargin2=2)
         self.agenda.tag_configure(
-            "due", foreground=ACCENT, font=(FAMILY, 9), spacing3=6, lmargin1=2, lmargin2=2
+            "due", foreground=theme.ACCENT, font=(FAMILY, 9), spacing3=6, lmargin1=2, lmargin2=2
         )
         self.agenda.grid(row=2, column=0, sticky="nsew", padx=(20, 4), pady=(8, 10))
         add_scrollbar(frame, self.agenda, row=2, column=1, pady=(8, 10), style=SIDEBAR_SCROLLBAR)
 
         self.undo_label = tk.Label(
-            frame, bg=SIDEBAR, fg=ACCENT, font=(FAMILY, 10), cursor="hand2", anchor="w"
+            frame, bg=SIDEBAR, fg=theme.ACCENT, font=(FAMILY, 10), cursor="hand2", anchor="w"
         )
         self.undo_label.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 8))
         self.undo_label.bind("<Button-1>", lambda event: self.run("undo"))
-        self.undo_label.bind("<Enter>", lambda event: self.undo_label.configure(fg=ACCENT_HOVER))
-        self.undo_label.bind("<Leave>", lambda event: self.undo_label.configure(fg=ACCENT))
+        self.undo_label.bind("<Enter>", lambda event: self.undo_label.configure(fg=theme.ACCENT_HOVER))
+        self.undo_label.bind("<Leave>", lambda event: self.undo_label.configure(fg=theme.ACCENT))
+
+        self.google_home_label = tk.Label(
+            frame,
+            text=GOOGLE_HOME_LINK,
+            bg=SIDEBAR,
+            fg=MUTED,
+            font=(FAMILY, 10),
+            cursor="hand2",
+            anchor="w",
+        )
+        self.google_home_label.grid(row=4, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 8))
+        self.google_home_label.bind("<Button-1>", lambda event: webbrowser.open(GOOGLE_HOME_PAGE))
+        self.google_home_label.bind("<Enter>", lambda event: self.google_home_label.configure(fg=TEXT))
+        self.google_home_label.bind("<Leave>", lambda event: self.google_home_label.configure(fg=MUTED))
 
         self.settings_label = tk.Label(
             frame, bg=SIDEBAR, fg=MUTED, font=(FAMILY, 10), cursor="hand2", anchor="w"
         )
-        self.settings_label.grid(row=4, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
+        self.settings_label.grid(row=5, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 8))
         self.settings_label.bind("<Button-1>", lambda event: self.toggle_settings())
         self.settings_label.bind("<Enter>", lambda event: self.settings_label.configure(fg=TEXT))
         self.settings_label.bind("<Leave>", lambda event: self.settings_label.configure(fg=MUTED))
         self.settings_label.configure(text=SETTINGS_LINK)
+
+        self.quit_label = tk.Label(
+            frame,
+            text=QUIT_LINK,
+            bg=SIDEBAR,
+            fg=MUTED,
+            font=(FAMILY, 10),
+            cursor="hand2",
+            anchor="w",
+        )
+        self.quit_label.grid(row=6, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
+        self.quit_label.bind("<Button-1>", lambda event: self.ask_to_quit())
+        self.quit_label.bind("<Enter>", lambda event: self.quit_label.configure(fg=TEXT))
+        self.quit_label.bind("<Leave>", lambda event: self.quit_label.configure(fg=MUTED))
+
+    def set_accent(self, name):
+        """Change the accent color, repainting everything already drawn in the old one."""
+        old = (theme.ACCENT, theme.ACCENT_HOVER, theme.ON_ACCENT)
+        storage.set_setting(self.db, "accent_color", name)
+        theme.use_accent(name)
+        changes = dict(zip(old, (theme.ACCENT, theme.ACCENT_HOVER, theme.ON_ACCENT)))
+        theme.recolor(self.root, changes)
+        self.log.tag_configure("name", foreground=theme.ACCENT)
+        self.agenda.tag_configure("due", foreground=theme.ACCENT)
+        self.send_image = rounded_image(68, 32, 8, theme.ACCENT, SURFACE)
+        self.send_hover_image = rounded_image(68, 32, 8, theme.ACCENT_HOVER, SURFACE)
+        self.talk_on_image = rounded_image(68, 32, 8, theme.ACCENT, SURFACE)
+        self.send_button.configure(image=self.send_image)
+        self.set_talk_button(self.talk.active)
+        self.draw_box(changes.get(self.box_border, self.box_border))
+        self.settings.restyle()
+
+    def ask_to_quit(self):
+        if messagebox.askyesno("OSSI", CONFIRM_QUIT):
+            self.quit()
+
+    def quit(self):
+        """Stop OSSI completely, unlike closing the window, which keeps it running."""
+        self.settings.stop_sample()
+        self.talk.end()
+        self.root.destroy()
 
     def toggle_settings(self):
         """Swap the chat for the Settings page, or back again."""
@@ -213,7 +289,7 @@ class App:
             height=1,
         )
         self.log.tag_configure(
-            "name", foreground=ACCENT, font=SMALL_BOLD, spacing1=12, spacing3=2
+            "name", foreground=theme.ACCENT, font=SMALL_BOLD, spacing1=12, spacing3=2
         )
         self.log.tag_configure("ossi", spacing3=4, spacing2=3, rmargin=70)
         self.log.tag_configure("you", justify="right", spacing1=16)
@@ -244,18 +320,18 @@ class App:
         self.entry_item = self.box.create_window(16, BOX_HEIGHT // 2, anchor="w", window=self.entry)
         self.entry.bind("<Return>", lambda event: self.send())
         self.entry.bind("<Control-a>", self.select_all_typed)
-        self.entry.bind("<FocusIn>", lambda event: self.draw_box(ACCENT))
+        self.entry.bind("<FocusIn>", lambda event: self.draw_box(theme.ACCENT))
         self.entry.bind("<FocusOut>", lambda event: self.draw_box(BORDER))
 
-        self.send_image = rounded_image(68, 32, 8, ACCENT, SURFACE)
-        self.send_hover_image = rounded_image(68, 32, 8, ACCENT_HOVER, SURFACE)
+        self.send_image = rounded_image(68, 32, 8, theme.ACCENT, SURFACE)
+        self.send_hover_image = rounded_image(68, 32, 8, theme.ACCENT_HOVER, SURFACE)
         self.send_button = tk.Label(
             self.box,
             text="Send",
             image=self.send_image,
             compound="center",
             bg=SURFACE,
-            fg=ON_ACCENT,
+            fg=theme.ON_ACCENT,
             font=(FAMILY, 10, "bold"),
             cursor="hand2",
             borderwidth=0,
@@ -272,7 +348,7 @@ class App:
         )
 
         self.talk_image = rounded_image(68, 32, 8, BORDER, SURFACE)
-        self.talk_on_image = rounded_image(68, 32, 8, ACCENT, SURFACE)
+        self.talk_on_image = rounded_image(68, 32, 8, theme.ACCENT, SURFACE)
         self.talk_button = tk.Label(
             self.box,
             text="Talk",
@@ -299,7 +375,7 @@ class App:
         strip.columnconfigure((0, 2), weight=1, uniform="sides")  # Keeps the middle centered.
         self.glow = GlowOrb(strip)
         self.glow.grid(row=0, column=1)
-        self.talk_label = tk.Label(strip, bg=BG, fg=ACCENT, font=SMALL_BOLD)
+        self.talk_label = tk.Label(strip, bg=BG, fg=theme.ACCENT, font=SMALL_BOLD)
         self.talk_label.grid(row=1, column=1)
         link = self.mute_label = tk.Label(
             strip, text="Mute", bg=BG, fg=MUTED, font=(FAMILY, 10), cursor="hand2"
@@ -335,7 +411,7 @@ class App:
     def set_talk_button(self, on):
         self.talk_button.configure(
             image=self.talk_on_image if on else self.talk_image,
-            fg=ON_ACCENT if on else TEXT,
+            fg=theme.ON_ACCENT if on else TEXT,
             text="End" if on else "Talk",
         )
 
@@ -466,8 +542,7 @@ class App:
         if not text:
             return
         if text.lower() in EXIT_WORDS:
-            self.talk.end()
-            self.root.destroy()
+            self.quit()
             return
         self.entry.delete(0, "end")
         self.echo(text)
@@ -578,6 +653,42 @@ class App:
             briefing.mark_given(self.db)
             self.say_result(briefing.give_briefing(self.db, self.session, automatic=True))
 
+    def check_network(self):
+        """While the network is being watched, look at it now and then without blocking."""
+        now = time.time()
+        if (
+            self.network_checking
+            or now < self.next_network_check
+            or not network_skill.is_watching(self.db)
+        ):
+            return
+        scan = now >= self.next_device_scan
+        self.network_checking = True
+
+        def work():
+            status = network.check()
+            return status, network.find_devices() if scan and status.connected else None
+
+        def finish(db, result, session):
+            self.network_checking = False
+            self.next_network_check = time.time() + NETWORK_CHECK_SECONDS
+            if result:
+                status, devices = result
+                if scan and devices is not None:
+                    self.next_device_scan = time.time() + DEVICE_SCAN_SECONDS
+                self.report_network(status, devices)
+
+        self.start_fetch(Fetch("", work, finish))
+
+    def report_network(self, status, devices):
+        alerts = self.network_watch.update(status, time.time())
+        for device in network_skill.note_devices(self.db, devices or []):
+            alerts.append(("New network device", network_skill.describe_new_device(device)))
+        for title, message in alerts:
+            self.say(message, keep_place=True)
+            self.talk.tell(message)
+            self.toast(title, message)
+
     def start_ollama_if_on(self):
         """Have the local AI ready ahead of the first message, if it's turned on."""
         if storage.get_setting(self.db, "ai_model"):
@@ -618,6 +729,7 @@ class App:
                 return
             try:
                 self.check_reminders()
+                self.check_network()
                 self.check_desktop_offer()
                 self.check_briefing()
                 self.check_fetches()
@@ -637,7 +749,7 @@ class App:
             self.notify(
                 "OSSI is still running",
                 "It stays in the background for your reminders. "
-                "Open OSSI again and type exit to close it completely.",
+                "To stop it completely, open OSSI again and click Quit OSSI.",
             )
 
     def show(self):
@@ -739,7 +851,7 @@ class App:
             self.agenda.tag_configure(tag, foreground=color)
             self.agenda.configure(cursor=cursor)
 
-        self.agenda.tag_bind(tag, "<Enter>", lambda event: hover(ACCENT, "hand2"))
+        self.agenda.tag_bind(tag, "<Enter>", lambda event: hover(theme.ACCENT, "hand2"))
         self.agenda.tag_bind(tag, "<Leave>", lambda event: hover(MUTED, "arrow"))
         self.agenda.tag_bind(tag, "<Button-1>", lambda event: self.complete(task_id))
         self.agenda.insert(
