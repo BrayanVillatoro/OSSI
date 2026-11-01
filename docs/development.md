@@ -37,6 +37,20 @@ It uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) to recognize
 [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) for the voice, and
 [sounddevice](https://python-sounddevice.readthedocs.io/) for the microphone and speakers.
 
+## The camera add-on
+
+The camera works the same way as voice, in `~/.ossi/camera/`. `camera_worker.py` uses
+[OpenCV](https://opencv.org/) and prints what it sees as JSON, and nothing is written to disk. Without
+a live view, it runs once for each picture and exits. With `--live`, which `camera_view.py` starts,
+it keeps sending a small view until its stdin closes, and takes a picture when asked. Only one
+program can use a webcam at a time, so questions go through the live view while it's open. Errors go
+to `~/.ossi/camera/camera.log`.
+
+Ollama keeps the vision model, `ollama.VISION_MODEL`, which `ollama.list_models` leaves out so that
+the chat AI doesn't pick it. Removing the add-on only deletes the model if OSSI downloaded it.
+
+The camera commands are in `ai.OFF_LIMITS`, so a model can't turn on the camera.
+
 ## Publish an update
 
 Pushing to GitHub doesn't reach anyone's copy. People only get what you publish as a release:
@@ -78,6 +92,9 @@ src/ossi/
   glow.py       The animated glow shown during a conversation
   voice.py      Installs the voice add-on and starts its worker
   voice_worker.py  Listens and speaks, using the add-on's own Python environment
+  camera.py     Installs the camera add-on and takes pictures with its worker
+  camera_worker.py  Uses the webcam, in the add-on's own Python environment
+  camera_view.py  The live view above the message box
   notifications.py  Windows notifications
   instance.py   Keeps one copy running, and replaces it after an update
   autostart.py  Starts OSSI at login

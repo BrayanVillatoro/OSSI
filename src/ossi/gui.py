@@ -1,5 +1,6 @@
 """Desktop window: open tasks in the sidebar, chat with OSSI on the right."""
 
+import base64
 import ctypes
 import queue
 import sqlite3
@@ -25,6 +26,7 @@ from ossi import (
     theme,
     updater,
 )
+from ossi.camera_view import CameraView
 from ossi.drawing import rounded_image
 from ossi.glow import GlowOrb
 from ossi.registry import Fetch
@@ -42,6 +44,7 @@ from ossi.theme import (
     MUTED,
     SIDEBAR,
     SIDEBAR_SCROLLBAR,
+    SMALL,
     SMALL_BOLD,
     SURFACE,
     TEXT,
@@ -51,6 +54,7 @@ from ossi.theme import (
 from ossi.when import describe
 
 EXIT_WORDS = ("exit", "quit", "bye")
+DESCRIBE_THE_VIEW = "What do you see?"
 ICON = Path(__file__).parent / "assets" / "ossi.ico"
 
 DESKTOP_OFFER = "Add OSSI to your Desktop?\n\nThe shortcut opens OSSI and shows its icon."
@@ -89,7 +93,10 @@ class App:
         self.root = root
         self.db = db
         self.notify = notify
-        self.session = router.Session(defer=self.start_fetch)
+        self.session = router.Session(
+            defer=self.start_fetch, show_photo=self.show_photo, open_camera=self.open_camera
+        )
+        self.photos = []
         self.fetched = queue.Queue()
         self.listener = None
         self.toasts = []
@@ -126,6 +133,7 @@ class App:
         self.build_chat()
         self.settings = SettingsPanel(root, self)
         self.talk = Talk(self)
+        self.camera_view = CameraView(self)
 
         self.say("Hi! Type 'help' to see what I can do.")
         self.refresh_sidebar()
@@ -235,6 +243,7 @@ class App:
         self.talk_on_image = rounded_image(68, 32, 8, theme.ACCENT, SURFACE)
         self.send_button.configure(image=self.send_image)
         self.set_talk_button(self.talk.active)
+        self.set_camera_button(bool(self.camera_view.process))
         self.draw_box(changes.get(self.box_border, self.box_border))
         self.settings.restyle()
 
@@ -246,6 +255,7 @@ class App:
         """Stop OSSI completely, unlike closing the window, which keeps it running."""
         self.settings.stop_sample()
         self.talk.end()
+        self.camera_view.close()
         self.root.destroy()
 
     def toggle_settings(self):
@@ -253,6 +263,7 @@ class App:
         panel = self.settings
         panel.visible = not panel.visible
         if panel.visible:
+            self.camera_view.close()  # The view would be out of sight, with the camera still on.
             self.chat.grid_remove()
             panel.grid(row=0, column=1, sticky="nsew")
             panel.refresh()
@@ -302,10 +313,11 @@ class App:
         self.log.bind("<Button-3>", self.show_reply_menu)
         self.send_typing_to_entry(self.log)
 
+        self.build_camera_strip(frame)
         self.build_talk_status(frame)
 
         self.box = tk.Canvas(frame, bg=BG, height=BOX_HEIGHT, highlightthickness=0, borderwidth=0)
-        self.box.grid(row=2, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 20))
+        self.box.grid(row=3, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 20))
         self.box_image_item = self.box.create_image(0, 0, anchor="nw")
 
         self.entry = tk.Entry(
@@ -365,13 +377,70 @@ class App:
         self.talk_item = self.box.create_window(0, BOX_HEIGHT // 2, anchor="e", window=self.talk_button)
         self.talk_button.bind("<Button-1>", lambda event: self.talk.toggle())
 
+        self.camera_button = tk.Label(
+            self.box,
+            text="Camera",
+            image=self.talk_image,
+            compound="center",
+            bg=SURFACE,
+            fg=TEXT,
+            font=(FAMILY, 10, "bold"),
+            cursor="hand2",
+            borderwidth=0,
+            padx=0,
+            pady=0,
+        )
+        self.camera_item = self.box.create_window(
+            0, BOX_HEIGHT // 2, anchor="e", window=self.camera_button
+        )
+        self.camera_button.bind("<Button-1>", lambda event: self.camera_view.toggle())
+
         self.box_border = BORDER
         self.box.bind("<Configure>", lambda event: self.draw_box(self.box_border))
+
+    def build_camera_strip(self, frame):
+        """The strip above the box that shows the live view. Hidden until it's opened."""
+        strip = self.camera_strip = tk.Frame(frame, bg=BG)
+        strip.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 0))
+        strip.columnconfigure((0, 2), weight=1, uniform="sides")  # Keeps the middle centered.
+        self.camera_picture = tk.PhotoImage()
+        self.camera_picture_label = tk.Label(strip, image=self.camera_picture, bg=BG, borderwidth=0)
+        self.camera_picture_label.grid(row=0, column=1)
+        self.camera_label = tk.Label(strip, bg=BG, fg=MUTED, font=SMALL)
+        self.camera_label.grid(row=1, column=1, pady=(4, 0))
+        link = tk.Label(strip, text="Close", bg=BG, fg=MUTED, font=(FAMILY, 10), cursor="hand2")
+        link.grid(row=1, column=2, sticky="e")
+        link.bind("<Button-1>", lambda event: self.camera_view.close())
+        link.bind("<Enter>", lambda event: link.configure(fg=TEXT))
+        link.bind("<Leave>", lambda event: link.configure(fg=MUTED))
+        strip.grid_remove()
+
+    def open_camera(self):
+        self.camera_view.open()
+
+    def show_camera_strip(self, text):
+        self.camera_label.configure(text=text)
+        self.camera_strip.grid()
+        self.entry.focus_set()
+        self.log.see("end")
+
+    def show_camera_view(self, view):
+        self.camera_picture.configure(data=base64.b64decode(view))  # Tk reads this format only as bytes.
+
+    def hide_camera_strip(self):
+        self.camera_strip.grid_remove()
+        self.camera_picture.blank()
+
+    def set_camera_button(self, on):
+        self.camera_button.configure(
+            image=self.talk_on_image if on else self.talk_image,
+            fg=theme.ON_ACCENT if on else TEXT,
+        )
 
     def build_talk_status(self, frame):
         """The strip above the box that shows what a conversation is doing. Hidden until one starts."""
         strip = self.talk_strip = tk.Frame(frame, bg=BG)
-        strip.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 0))
+        strip.grid(row=2, column=0, columnspan=2, sticky="ew", padx=(28, 38), pady=(6, 0))
         strip.columnconfigure((0, 2), weight=1, uniform="sides")  # Keeps the middle centered.
         self.glow = GlowOrb(strip)
         self.glow.grid(row=0, column=1)
@@ -429,7 +498,8 @@ class App:
         self.box.itemconfigure(self.box_image_item, image=self.box_image)
         self.box.coords(self.send_item, width - 8, BOX_HEIGHT // 2)
         self.box.coords(self.talk_item, width - 84, BOX_HEIGHT // 2)
-        self.box.itemconfigure(self.entry_item, width=width - 184)
+        self.box.coords(self.camera_item, width - 160, BOX_HEIGHT // 2)
+        self.box.itemconfigure(self.entry_item, width=width - 260)
 
     def say(self, text, keep_place=False):
         """Add a reply. With keep_place, don't pull someone away from reading older messages."""
@@ -439,6 +509,18 @@ class App:
         self.log.insert(
             "end", "OSSI\n", "name", text, ("ossi", f"reply{self.reply_count}"), "\n", "ossi"
         )
+        self.log.configure(state="disabled")
+        if follow:
+            self.log.see("end")
+
+    def show_photo(self, thumbnail):
+        """Show a picture being asked about. It's only kept in memory, until OSSI closes."""
+        photo = tk.PhotoImage(data=thumbnail)
+        self.photos.append(photo)  # Tk stops showing an image once Python lets go of it.
+        follow = self.log.yview()[1] >= AT_BOTTOM
+        self.log.configure(state="normal")
+        self.log.image_create("end", image=photo, pady=4)
+        self.log.insert("end", "\n", "ossi")
         self.log.configure(state="disabled")
         if follow:
             self.log.see("end")
@@ -539,6 +621,8 @@ class App:
 
     def send(self):
         text = self.entry.get().strip()
+        if not text and self.camera_view.process:
+            text = DESCRIBE_THE_VIEW
         if not text:
             return
         if text.lower() in EXIT_WORDS:
@@ -606,7 +690,7 @@ class App:
             start,
             draft.text,
             (*tags, f"reply{number}"),
-            f" {dots}" if draft.text else f"Writing a reply {dots}",
+            f" {dots}" if draft.text else f"{draft.waiting} {dots}",
             (*tags, "writing"),
         )
         self.log.configure(state="disabled")
@@ -697,6 +781,7 @@ class App:
     def restart_updated(self):
         """Open the updated OSSI, which replaces this copy within a moment."""
         self.talk.end()
+        self.camera_view.close()
         updater.start_new_copy()
 
     def check_desktop_offer(self):
@@ -725,6 +810,7 @@ class App:
             if self.listener.poll():
                 self.show()
             if self.listener.replaced:
+                self.camera_view.close()
                 self.root.destroy()  # Updated code is starting up to take over.
                 return
             try:
@@ -743,6 +829,7 @@ class App:
                 self.root.after(TICK_MS, self.tick)
 
     def hide(self):
+        self.camera_view.close()  # The camera shouldn't stay on with nothing showing that it is.
         self.root.withdraw()
         if not self.told_about_background:
             self.told_about_background = True

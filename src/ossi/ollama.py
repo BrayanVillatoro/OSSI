@@ -19,6 +19,7 @@ from pathlib import Path
 
 ADDRESS = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "llama3.2"
+VISION_MODEL = "gemma3:4b"  # Only used for pictures, because it's slower to chat with.
 QUICK_TIMEOUT_SECONDS = 5
 START_TIMEOUT_SECONDS = 30
 START_CHECK_SECONDS = 0.25
@@ -27,6 +28,9 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 # The longest wait for more of the answer. A model has to load before its first word, and
 # this can be slow without a dedicated graphics card.
 ANSWER_TIMEOUT_SECONDS = 180
+# Understanding a picture takes half a minute even before loading, on a computer without one.
+PICTURE_TIMEOUT_SECONDS = 600
+PULL_TIMEOUT_SECONDS = 120  # The longest wait for news of a download, not the whole download.
 # Ignores any proxy set up in Windows, which could otherwise carry messages off this computer.
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -108,11 +112,49 @@ def is_local(model):
     return "cloud" not in model.lower()
 
 
-def list_models():
+def all_models():
     """The models that run on this computer. Raises OSError if Ollama isn't running."""
     with OPENER.open(f"{ADDRESS}/api/tags", timeout=QUICK_TIMEOUT_SECONDS) as response:
         data = json.load(response)
     return [model["name"] for model in data["models"] if is_local(model["name"])]
+
+
+def list_models():
+    """The models to chat with, which leaves out the one kept for pictures."""
+    return [name for name in all_models() if name != VISION_MODEL]
+
+
+def pull(model, on_bytes):
+    """Download a model, calling `on_bytes` with how much has arrived so far."""
+    request = urllib.request.Request(
+        f"{ADDRESS}/api/pull",
+        data=json.dumps({"model": model, "stream": True}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    arrived = {}  # A model comes in several parts, each reported on its own.
+    status = ""
+    with OPENER.open(request, timeout=PULL_TIMEOUT_SECONDS) as response:
+        for line in response:
+            piece = json.loads(line)
+            if "error" in piece:
+                raise ValueError(piece["error"])
+            status = piece.get("status", "")
+            if "digest" in piece and "completed" in piece:
+                arrived[piece["digest"]] = piece["completed"]
+                on_bytes(sum(arrived.values()))
+    if status != "success":
+        raise ValueError(f"The download of {model} stopped early")
+
+
+def delete_model(model):
+    request = urllib.request.Request(
+        f"{ADDRESS}/api/delete",
+        data=json.dumps({"model": model}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="DELETE",
+    )
+    with OPENER.open(request, timeout=QUICK_TIMEOUT_SECONDS):
+        pass
 
 
 def reply_so_far(content):
@@ -170,6 +212,23 @@ def talk(model, system, message, history=(), on_text=None):
     return content
 
 
+def look(model, system, question, picture, on_text=None):
+    """Ask the model about a picture, given as base64 text, and return its answer in plain words."""
+    body = {
+        "options": {"temperature": 0.2},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": question, "images": [picture]},
+        ],
+    }
+    content = ""
+    for piece in stream(model, body, PICTURE_TIMEOUT_SECONDS):
+        content += piece
+        if on_text:
+            on_text(content)
+    return content
+
+
 def warm(model, system):
     """Load the model and read `system` ahead of time, so the first answer isn't the slow one."""
     body = {
@@ -181,7 +240,7 @@ def warm(model, system):
         pass
 
 
-def stream(model, body):
+def stream(model, body, timeout=ANSWER_TIMEOUT_SECONDS):
     """Send a chat request to the model, and yield each piece of its answer as it arrives."""
     if not is_local(model):
         raise ValueError(f"{model} doesn't run on this computer")
@@ -190,7 +249,7 @@ def stream(model, body):
         data=json.dumps({"model": model, "stream": True, **body}).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with OPENER.open(request, timeout=ANSWER_TIMEOUT_SECONDS) as response:
+    with OPENER.open(request, timeout=timeout) as response:
         for line in response:
             piece = json.loads(line)
             if "error" in piece:

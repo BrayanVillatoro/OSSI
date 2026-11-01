@@ -40,9 +40,13 @@ OFF_LIMITS = {
     "turn on the daily briefing",
     "watch my network",
     "stop watching my network",
+    "look at this",
+    "open the camera",
+    "close the camera",
+    "turn off the camera",
 }
 
-# Commands that only look something up, so running one by mistake does no harm.
+# Commands that only look something up or turn off the camera, so running one by mistake does no harm.
 LOOKUPS = {
     "reminders",
     "tasks",
@@ -56,6 +60,8 @@ LOOKUPS = {
     "find note <word>",
     "network status",
     "network devices",
+    "close the camera",
+    "turn off the camera",
 }
 
 INSTRUCTIONS = """You are OSSI, a personal assistant running on the user's computer.
@@ -130,6 +136,11 @@ Open tasks:
 Upcoming reminders:
 {reminders}"""
 SPOKEN_QUESTION = "Should I"
+# How to ask out loud about commands whose own words wouldn't make sense after "Should I".
+SPOKEN_WORDING = {
+    "look at this": "use the camera to take a look",
+    "open the camera": "open the camera",
+}
 DO_ACTION = re.compile(r"\[\s*DO:\s*(.+?)\s*\]", re.IGNORECASE)
 CANT_TALK = "Sorry, I can't reach the model right now. Is Ollama still running?"
 
@@ -223,8 +234,10 @@ def build_talk_instructions(db, now=None):
     )
 
 
-def spoken_confirm(command, intro=""):
+def spoken_confirm(command, intro="", usage=None):
     """Ask out loud before running a command, in words that make sense coming from OSSI."""
+    if usage in SPOKEN_WORDING:
+        return Confirm(command, intro, SPOKEN_QUESTION, SPOKEN_WORDING[usage])
     shown = command[0].lower() + command[1:]
     if shown.startswith("remind me"):
         shown = "remind you" + shown.removeprefix("remind me")

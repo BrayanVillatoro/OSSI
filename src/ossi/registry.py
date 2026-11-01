@@ -48,6 +48,7 @@ class Draft:
 
     stopped: Callable[[], bool]  # Whether the reply is no longer wanted.
     text: str = ""
+    waiting: str = "Writing a reply"  # Shown until the first words arrive.
 
 
 @dataclass

@@ -7,6 +7,7 @@ from typing import Callable
 from ossi import fuzzy, skills  # noqa: F401  (importing skills registers every skill)
 from ossi.registry import COMMANDS, NO, YES, Ask, Confirm, Fetch
 from ossi.skills import ai
+from ossi.skills import camera as camera_skill
 
 FALLBACK = ai.NOT_UNDERSTOOD
 NEVER_MIND = "OK, never mind."
@@ -48,6 +49,9 @@ class Session:
     focus: dict = field(default_factory=dict)  # The task or reminder "it" refers to.
     listing: dict = field(default_factory=dict)  # The order "the second one" refers to.
     defer: Callable[[Fetch], None] | None = None  # Runs slow work without blocking the caller.
+    show_photo: Callable[[str], None] | None = None  # Shows a picture, if this can show them.
+    open_camera: Callable[[], None] | None = None  # Opens a live view, if this can show one.
+    live_camera: object | None = None  # The live view while it's open, to take pictures from.
     history: list = field(default_factory=list)  # Recent messages, for the AI's context.
     turn: int = 0  # How many messages the user has sent.
     thinking: int = 0  # How many answers the AI still owes.
@@ -161,8 +165,17 @@ def handle_spoken(db, text, session):
 
     if found and found[0].usage in ai.LOOKUPS:
         return render(db, run(db, found, session), session)
+    # There's nothing to ask if the camera is already on, or can't turn on.
+    if (
+        found
+        and found[0].usage in camera_skill.TURNS_IT_ON
+        and (session.live_camera or not camera_skill.is_on(db))
+    ):
+        return render(db, run(db, found, session), session)
     if found and found[0].usage is not None:
-        return render(db, ai.spoken_confirm(stripped), session)
+        return render(db, ai.spoken_confirm(stripped, usage=found[0].usage), session)
+    if session.live_camera and camera_skill.is_about_the_view(text):
+        return render(db, camera_skill.look(db, session, text), session)
 
     def find_suggested(command):
         return find_loosely(clean(command))
@@ -193,6 +206,10 @@ def handle(db, text, session=None):
         result = answer_pending(db, pending, text, session)
         if result is not None:
             return render(db, result, session)
+
+    # With the live view open, a message that isn't a command is a question about what's in it.
+    if session.live_camera and text.lower() not in DISMISS:
+        return render(db, camera_skill.look(db, session, text), session)
 
     suggestion = fuzzy.suggest(
         with_apostrophes(stripped or text), lambda c: find_command(c) is not None

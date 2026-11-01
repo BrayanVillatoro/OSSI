@@ -2,12 +2,24 @@
 
 import tkinter as tk
 import webbrowser
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
-from ossi import __version__, autostart, desktop, ollama, storage, theme, updater, voice, weather
+from ossi import (
+    __version__,
+    autostart,
+    camera,
+    desktop,
+    ollama,
+    storage,
+    theme,
+    updater,
+    voice,
+    weather,
+)
 from ossi.drawing import rounded_image
 from ossi.registry import Fetch
 from ossi.skills import ai, briefing, startup
+from ossi.skills import camera as camera_skill
 from ossi.skills import network as network_skill
 from ossi.skills import weather as weather_skill
 from ossi.theme import (
@@ -38,6 +50,37 @@ RIGHT_SPACE = 90  # Room beside wrapped text for the switch.
 LABEL_INSET = 3  # Lines a box up with label text, which Tk indents slightly.
 SAMPLE_CHECK_MS = 200
 ACCENT_CHOICE = 28
+CAMERA_PROGRESS_MS = 300
+CAMERA_OFF = (
+    'Off. With a webcam plugged in, you can ask things like "what am I holding?" or "read this '
+    'label". Setting it up downloads about 3.5 GB once, and needs Ollama.'
+)
+CAMERA_OFF_INSTALLED = (
+    'Off. With a webcam plugged in, you can ask things like "what am I holding?" or "read this label".'
+)
+CAMERA_ON = (
+    "On. Click Camera in the chat for a live view, or just ask something like \"what am I holding?\". "
+    "The camera is only on while the live view is open, or for a moment when you ask. Pictures stay "
+    "on this computer and aren't saved."
+)
+CAMERA_NEEDS_OLLAMA = (
+    "The camera needs Ollama, which isn't installed yet. Click Download Ollama below and install "
+    "it, then turn this on again. OSSI downloads what else it needs."
+)
+CONFIRM_CAMERA = (
+    "The camera needs a vision model and a small add-on, about 3.5 GB to download.\n\n"
+    "After that it works offline, and your pictures stay on this computer. The model needs about "
+    "6 GB of free memory, and each answer can take a minute without a graphics card.\n\n"
+    "Set it up now?"
+)
+CONFIRM_REMOVE_CAMERA = (
+    "Remove the camera add-on?\n\nUsing the camera again means downloading about 3.5 GB again."
+)
+CAMERA_REMOVED = "Removed."
+CAMERA_MODEL_STAYED = (
+    f"Removed, but Ollama still has the vision model. To delete it, paste this in Command Prompt: "
+    f"ollama rm {ollama.VISION_MODEL}"
+)
 
 
 class Switch(tk.Canvas):
@@ -99,6 +142,8 @@ class SettingsPanel(tk.Frame):
         self.place_lookup = 0
         self.sample = None  # The voice sample playing right now.
         self.updating = False
+        self.camera_installing = False
+        self.camera_progress = ""
         self.switches = []
         self.accent_images = {}
 
@@ -123,6 +168,7 @@ class SettingsPanel(tk.Frame):
 
         self.build_ai()
         self.build_talk()
+        self.build_camera()
         self.build_network()
         self.build_weather()
         self.build_appearance()
@@ -130,6 +176,7 @@ class SettingsPanel(tk.Frame):
         # Hidden only now: earlier, the next section would have been given their rows.
         self.ai_links.grid_remove()
         self.model_row.grid_remove()
+        self.camera_links.grid_remove()
         self.use_wheel_on(self.canvas)
         self.use_wheel_on(self.body)
 
@@ -566,6 +613,98 @@ class SettingsPanel(tk.Frame):
             )
             self.links(self.voice_links, [])
 
+    # Camera
+
+    def build_camera(self):
+        self.heading("CAMERA")
+        self.camera_switch, self.camera_status = self.switch_row(
+            "Let OSSI use my camera", "", self.toggle_camera
+        )
+        self.camera_links = tk.Frame(self.body, bg=BG)
+        self.camera_links.grid(sticky="w", padx=SIDE_MARGIN, pady=(0, 8))
+
+    def refresh_camera(self, message=None):
+        if self.camera_installing:
+            return
+        installed = camera.is_installed()
+        on = camera_skill.is_on(self.db)
+        self.camera_switch.set(on)
+        self.camera_status.configure(
+            text=message or (CAMERA_ON if on else CAMERA_OFF_INSTALLED if installed else CAMERA_OFF)
+        )
+        self.links(
+            self.camera_links, [("Remove the camera add-on", self.remove_camera)] if installed else []
+        )
+
+    def toggle_camera(self, on):
+        if self.camera_installing:
+            self.camera_switch.set(True)  # Setting up can't be stopped partway.
+        elif not on:
+            self.app.camera_view.close()
+            camera_skill.turn_off(self.db)
+            self.refresh_camera()
+        elif camera.is_installed():
+            camera_skill.turn_on(self.db)
+            self.refresh_camera()
+        elif not ollama.is_installed():
+            self.camera_switch.set(False)
+            self.camera_status.configure(text=CAMERA_NEEDS_OLLAMA)
+            self.links(self.camera_links, [("Download Ollama", lambda: webbrowser.open(OLLAMA_SITE))])
+        elif messagebox.askyesno("OSSI", CONFIRM_CAMERA):
+            self.install_camera()
+        else:
+            self.camera_switch.set(False)
+
+    def install_camera(self):
+        self.camera_installing = True
+        self.camera_progress = "Setting up the camera..."
+        self.camera_switch.set(True)
+        self.links(self.camera_links, [])
+        self.show_camera_progress()
+
+        def report(message):
+            self.camera_progress = message
+
+        def work():
+            try:
+                camera.install(report)
+            except Exception as error:  # Downloads and installs can fail in many ways.
+                return str(error) or type(error).__name__
+            return True
+
+        def finish(db, result, session):
+            self.camera_installing = False
+            if result is True:
+                camera_skill.turn_on(db)
+                self.refresh_camera()
+                return camera_skill.READY
+            self.refresh_camera(
+                f"I couldn't set up the camera: {result}. There's more detail in {camera.log_path()}."
+            )
+            self.links(self.camera_links, [("Try again", self.install_camera)])
+            return None
+
+        self.app.start_fetch(Fetch("", work, finish))
+
+    def show_camera_progress(self):
+        if self.camera_installing:
+            self.camera_status.configure(text=self.camera_progress)
+            self.after(CAMERA_PROGRESS_MS, self.show_camera_progress)
+
+    def remove_camera(self):
+        if not messagebox.askyesno("OSSI", CONFIRM_REMOVE_CAMERA):
+            return
+        self.app.camera_view.close()
+        camera_skill.turn_off(self.db)
+        self.camera_switch.set(False)
+        self.camera_status.configure(text="Removing it...")
+        self.links(self.camera_links, [])
+
+        def finish(db, removed, session):
+            self.refresh_camera(CAMERA_REMOVED if removed else CAMERA_MODEL_STAYED)
+
+        self.app.start_fetch(Fetch("", camera.remove, finish))
+
     # Appearance
 
     def build_appearance(self):
@@ -794,6 +933,7 @@ class SettingsPanel(tk.Frame):
     def refresh(self):
         self.refresh_ai()
         self.refresh_talk()
+        self.refresh_camera()
         self.network_switch.set(network_skill.is_watching(self.db))
         self.refresh_weather()
         self.refresh_appearance()

@@ -14,6 +14,8 @@ A personal assistant desktop app that runs on your own computer. No AI key, no a
   outages and new devices.
 - **Local AI (optional):** a model on your own computer handles what the commands don't understand.
 - **Talking (optional):** have a spoken conversation, entirely on your own computer.
+- **Camera (optional):** hold something up to your webcam and ask about it, entirely on your own
+  computer.
 
 OSSI only understands what it's been taught, but it copes with typos, polite wording and follow-ups
 like `finish it`.
@@ -26,7 +28,7 @@ notes and reminders are never sent.
 ## Get started
 
 You need Windows and Python 3.11 or newer. There's nothing else to install, unless you want the
-optional [Local AI](#local-ai-optional) or [Talking](#talking-optional).
+optional [Local AI](#local-ai-optional), [Talking](#talking-optional) or [Camera](#camera-optional).
 
 [Download the latest release](https://github.com/BrayanVillatoro/OSSI/releases/latest), unzip it,
 and double-click `OSSI.pyw` to open the app. The first time, OSSI offers to add itself to your Desktop
@@ -62,7 +64,7 @@ You can also click the circle next to a task to complete it, and right-click a m
 
 ### Settings
 
-Click **Settings** at the bottom of the sidebar to turn on the AI, set your location, switch between
+Click **Settings** at the bottom of the sidebar to turn on the AI or the camera, set your location, switch between
 °F and °C, turn off the daily briefing, change the accent color, start OSSI when you log in, add it to your Desktop, report a bug, or sponsor
 OSSI.
 
@@ -144,6 +146,43 @@ Good to know:
 - **Language:** English only for now.
 
 To hear and choose a voice, or to remove the add-on, go to **Settings**.
+
+## Camera (optional)
+
+Show something to your webcam and ask about it, like `what am I holding`, `read this label` or
+`what color is this`.
+
+![The live camera view above the message box, with a picture of a label in the chat and OSSI reading it out](docs/camera.png)
+
+1. Plug in a webcam and install [Ollama](https://ollama.com/).
+2. In **Settings**, turn on **Let OSSI use my camera**. The first time, OSSI downloads a vision model
+   and a small add-on, about 3.5 GB. After that it works offline.
+3. Click **Camera** next to the message box for a live view, and line up your shot.
+4. Type a question and press Enter, or just press Enter for a description. OSSI shows the picture it
+   took, then answers. Click **Close** when you're done.
+
+You can also ask without opening the live view, and OSSI takes one picture. The live view is mirrored
+to make lining things up easier, but the pictures aren't, so text in them reads normally.
+
+**By voice:** during a [conversation](#talking-optional), say `open the camera`, then ask about what
+you're showing it, and say `close the camera` when you're done. With the live view closed, you can
+still say `what am I holding`.
+
+Good to know:
+
+- **Privacy:** the camera is only on while the live view is open, or for a moment when you ask. It
+  closes itself after 2 minutes without a question, and whenever you open Settings or close the window.
+  Pictures aren't saved or sent anywhere. Each one stays in the chat, in memory, until OSSI closes.
+- **Control:** the AI model can't turn on the camera. Out loud, OSSI asks first and you answer yes or
+  no, unless the live view is already open.
+- **What goes to the camera:** with the live view open, anything you type that isn't a command is a
+  question about the picture. Out loud, only what sounds like it's about the picture is, like
+  `what brand is it`, and the rest stays ordinary conversation.
+- **Speed:** without a dedicated graphics card, expect up to a minute for each answer. It needs about
+  6 GB of free memory. Say `never mind` to stop one.
+- **Accuracy:** models can get things wrong, so check anything important, like a medicine label.
+
+To turn it off or remove the add-on, go to **Settings**.
 
 ## Development
 

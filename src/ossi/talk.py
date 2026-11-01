@@ -196,6 +196,7 @@ class Talk:
         """Read out this reply as it's written."""
         self.draft = draft
         self.sent = ""
+        self.show_listening()  # Looking at a picture starts well after OSSI said it would.
 
     def read_draft(self):
         if self.draft is None:
